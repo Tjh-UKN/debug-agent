@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.debug-agent/
+.env
+.env.*
+!.env.example
+*.zip

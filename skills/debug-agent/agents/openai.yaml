@@ -1,0 +1,6 @@
+interface:
+  display_name: "精度诊断 Agent"
+  short_description: "以假设和证据驱动精度定位，支持场景缩减、子任务协作与长任务恢复"
+  default_prompt: "使用 $debug-agent 分析当前精度问题，根据证据选择下一步并推进到定位闭环。"
+policy:
+  allow_implicit_invocation: true

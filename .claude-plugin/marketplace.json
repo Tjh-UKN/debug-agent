@@ -1,0 +1,5 @@
+{
+  "name": "debug-agent-marketplace",
+  "owner": {"name": "Tjh-UKN"},
+  "plugins": [{"name": "debug-agent", "source": "./", "description": "Hypothesis-driven precision diagnosis"}]
+}
