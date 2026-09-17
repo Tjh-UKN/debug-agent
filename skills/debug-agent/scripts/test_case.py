@@ -135,12 +135,22 @@ class CaseTests(unittest.TestCase):
 
     def test_process_lock_rejects_other_writer_then_releases(self):
         script = str(Path(case.__file__).resolve())
-        args = [sys.executable, script, "--case", str(self.root), "show"]
+        payload = self.root / "payload.json"
+        payload.write_text(json.dumps(self.evidence()), encoding="utf-8")
+        args = [sys.executable, script, "--case", str(self.root), "put", "--kind", "evidence", "--file", str(payload)]
         with case.locked(self.root):
             busy = subprocess.run(args, capture_output=True, encoding="utf-8")
             self.assertEqual(busy.returncode, 2)
             self.assertIn("case busy", busy.stderr)
+            self.assertEqual(case.execute(self.root, "show")["rev"], 0)
         self.assertEqual(subprocess.run(args, capture_output=True).returncode, 0)
+
+    def test_read_only_show_does_not_create_lock(self):
+        (self.root / ".lock").unlink()
+        before = (self.root / "state.json").read_bytes()
+        case.execute(self.root, "show")
+        self.assertFalse((self.root / ".lock").exists())
+        self.assertEqual(before, (self.root / "state.json").read_bytes())
 
     def test_no_direct_task_done(self):
         task = self.running()

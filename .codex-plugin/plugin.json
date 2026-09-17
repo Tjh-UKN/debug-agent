@@ -1,6 +1,6 @@
 {
   "name": "debug-agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Hypothesis-driven precision diagnosis with persistent tasks and evidence-based status cards.",
   "author": {
     "name": "Tjh-UKN"

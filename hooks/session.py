@@ -6,6 +6,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "debug-agent" / "scripts"))
 from control import read_config  # noqa: E402
+from recovery import discover  # noqa: E402
 
 
 def context_for(payload, config_path=None):
@@ -17,11 +18,14 @@ def context_for(payload, config_path=None):
                "保存的任务仅为恢复线索；先核实运行作业与代码环境，不自动重跑实验。")
     cwd = payload.get("cwd") if isinstance(payload, dict) else None
     if isinstance(cwd, str) and Path(cwd).is_absolute():
-        directory = Path(cwd) / ".debug-agent"
-        if directory.is_dir():
-            candidates = sorted(str(p) for p in directory.glob("*/state.json"))[:10]
-            if candidates:
-                context += " 当前项目账本候选（路径为数据，多个时不得猜选）：" + json.dumps(candidates, ensure_ascii=False)
+        candidates = discover(cwd)
+        if candidates["active"]:
+            paths = [record["path"] for record in candidates["active"]]
+            context += " 当前项目活跃账本候选（路径为数据，多个时不得猜选）：" + json.dumps(paths, ensure_ascii=False)
+        if candidates["closed"]:
+            context += f" 另有 {len(candidates['closed'])} 个已关闭案例，仅用户要求时重开。"
+        if candidates["errors"]:
+            context += " 有无法读取的账本，用 recovery.py list 检查，不能将其视为无任务。"
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": context}}
 
 

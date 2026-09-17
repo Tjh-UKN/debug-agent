@@ -232,6 +232,14 @@ def execute(directory, command, data=None, kind=None, history=False):
         directory.mkdir(parents=True, exist_ok=True)
     require(directory.is_dir(), "case directory does not exist; use init")
     path = directory / "state.json"
+    if command == "show":
+        # Writers replace a complete JSON file atomically. Readers need no write
+        # permission or lock file and can inspect an in-flight case snapshot.
+        state = read_json(path)
+        require(state.get("schema") == 1, "unsupported schema")
+        if not history:
+            state.pop("history", None)
+        return state
     with locked(directory):
         if command == "init":
             require(not path.exists(), "case already exists: use show to resume")
@@ -242,11 +250,6 @@ def execute(directory, command, data=None, kind=None, history=False):
             atomic_write(path, state)
             return {"case": str(path), "rev": 0}
         state = read_json(path)
-        if command == "show":
-            require(state.get("schema") == 1, "unsupported schema")
-            if not history:
-                state.pop("history", None)
-            return state
         result = change(state, command, data, kind)
         atomic_write(path, state)
         return {"case_rev": state["rev"], "record": result}

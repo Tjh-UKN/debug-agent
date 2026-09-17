@@ -20,7 +20,7 @@ DEBUG AGENT · 诊断进度
 
 ## 安装
 
-需要 Python 3.10+，示例使用 `python` 命令，无第三方运行依赖。仓库为私有时，需要拥有访问权限。
+需要 Python 3.10+，示例使用 `python` 命令；Linux/WSL 只有 `python3` 时使用该命令。无第三方运行依赖。仓库为私有时，需要拥有访问权限。
 
 ### Codex
 
@@ -30,7 +30,7 @@ cd debug-agent
 python scripts/install.py codex
 ```
 
-安装到 `$CODEX_HOME/skills/debug-agent`，未设置时为 `~/.codex/skills/debug-agent`。已有不同版本时使用 `--update`，旧文件会先备份。新会话中可显式调用 `$debug-agent`；Skill description 允许宿主自动选择，具体是否命中由宿主判断。
+安装到 `$CODEX_HOME/skills/debug-agent`，未设置时为 `~/.codex/skills/debug-agent`。已有不同版本时使用 `--update`，旧文件会先备份；更新遇到文件写入异常会回滚已写入文件，回滚本身失败时报告备份位置。新会话中可显式调用 `$debug-agent`；Skill description 允许宿主自动选择，具体是否命中由宿主判断。
 
 ### Claude Code
 
@@ -63,7 +63,7 @@ python scripts/install.py claude-alias
 | `/debug-agent off` | 关闭该启动提醒，不取消实验或禁用显式调用 |
 | `/debug-agent help` | 显示可用命令 |
 
-Claude Code 插件的 `SessionStart` hook 默认关闭，通过 `on` 开启后，在启动、恢复和压缩后提供诊断接入与账本位置提示。hook 只读本地数据，不联网、不启动实验、不阻塞结束。宿主执行 hook 的环境需要能够找到 `python`。
+Claude Code 插件的 `SessionStart` hook 默认关闭，通过 `on` 开启后，在启动、恢复和压缩后提供诊断接入与账本位置提示。hook 只读本地数据，不联网、不启动实验、不阻塞结束。启动脚本优先使用 `python3`，其次 `python`，通过宿主的 Bash 执行。配置默认为 `~/.debug-agent/config.json`，隔离验证可用 `DEBUG_AGENT_CONFIG` 指定其他文件。
 
 Codex 当前通过 Skill 自动选择接入，未实现同等的 SessionStart 注入；`on/off` 在其中只能保存偏好。自动选择、会话提醒、持久化恢复和后台持续运行是不同能力，本包没有后台调度器。
 
@@ -78,6 +78,15 @@ Codex 当前通过 Skill 自动选择接入，未实现同等的 SessionStart �
 
 长任务状态存项目 `.debug-agent/<case-id>/state.json`，包含假设、证据引用、复现场景、任务、checkpoint 与历史。Python 工具提供并发锁、原子提交和版本冲突检查；它们不判断证据真实性，也不执行模型调用。
 
+恢复工具提供只读快照，不要求创建锁文件，不变更任务状态：
+
+```sh
+python skills/debug-agent/scripts/recovery.py list --project .
+python skills/debug-agent/scripts/recovery.py resume --case .debug-agent/<case-id>
+```
+
+从项目子目录也能找到最近的账本，遇到 Git 边界停止。活跃、已关闭和无法读取的案例分别列出；多个活跃案例不会自动猜选。恢复摘要保留运行中的 host/job_id/命令/产物和待验收结果，并提示 checkpoint 过期、基线失效等情况。`running` 始终只是保存时的状态，不能代替实时作业核查。
+
 ## 验证与维护
 
 ```sh
@@ -87,7 +96,7 @@ python -B scripts/test_integration.py
 
 验证覆盖账本可靠性、命令偏好、会话提醒、基于真实状态的面板和隔离安装。已有独立 agent 在合成 CPU 精度案例中完成定位与修复闭环；它不证明真实硬件诊断效果。真实问题集应同时评价最终结论和关键决策节点，见 [评估约定](skills/debug-agent/references/evaluation.md)。
 
-本轮验证运行于 Windows/Python 3.13；未进行 Claude Code 客户端端到端测试或 Linux 运行验证。插件格式及 hook 协议依据 [Claude Code 插件文档](https://code.claude.com/docs/en/plugins) 与 [Hooks 文档](https://code.claude.com/docs/en/hooks)。
+账本与接入测试已在 Windows/Python 3.13 和 WSL Ubuntu/Python 3 运行。真实 Claude Code 客户端已验证插件/命令发现、SessionStart 提醒与只读账本访问；完整恢复脚本路径的验证结果见 [验证记录](docs/validation.md)。Codex 桌面自带 CLI 的独立会话测试无输出超时，未记为客户端验证通过。插件格式及 hook 协议依据 [Claude Code 插件文档](https://code.claude.com/docs/en/plugins) 与 [Hooks 文档](https://code.claude.com/docs/en/hooks)。
 
 ## 目录
 

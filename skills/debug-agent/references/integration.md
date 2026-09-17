@@ -6,7 +6,7 @@
 - Claude Code：`claude plugin marketplace add tjh-ukn/debug-agent`，再 `claude plugin install debug-agent@debug-agent-marketplace`。入口 `/debug-agent:debug`。克隆仓库后可运行 `python scripts/install.py claude-alias` 安装 `/debug-agent` 别名；别名依赖该克隆位置，不单独安装 hook。
 - 两端共享核心规则、参数路由与展示协议，查看 [命令路由](commands.md) 和 [展示协议](display.md)。
 
-Claude Code 插件包含默认不启用的 SessionStart 提醒，由 `on/off` 控制 `~/.debug-agent/config.json`。安装 hook 且开启后，启动/恢复/压缩时提供入口和当前项目账本候选，模型仍须核实真实状态。执行 hook 的环境需要可用的 `python` 命令。
+Claude Code 插件包含默认不启用的 SessionStart 提醒，由 `on/off` 控制 `~/.debug-agent/config.json`，或 `DEBUG_AGENT_CONFIG` 指定的隔离文件。安装 hook 且开启后，启动/恢复/压缩时提供入口和当前项目账本候选，模型仍须核实真实状态。Bash 启动脚本优先选择 `python3`，其次 `python`，兼容没有未版本化 python 命令的 WSL。
 
 Codex 当前只接入 Skill 自动选择，未安装 SessionStart hook；不能声称 `on` 能强制跨会话注入。`off` 只关闭启动提醒，不代替宿主禁用设置，也不取消运行实验。
 

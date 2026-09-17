@@ -1,6 +1,7 @@
 """Manage the opt-in session reminder preference; does not run experiments."""
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -8,6 +9,7 @@ from case import atomic_write, locked
 
 
 def config_path(path=None):
+    path = path or os.environ.get("DEBUG_AGENT_CONFIG")
     return Path(path).expanduser().resolve() if path else Path.home() / ".debug-agent" / "config.json"
 
 

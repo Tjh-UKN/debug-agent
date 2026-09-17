@@ -43,6 +43,11 @@ def table(rows, widths):
     return "\n".join(lines)
 
 
+def details(rows, limit=64):
+    """Keep the card compact without discarding evidence or scope boundaries."""
+    return [f"{label}（完整）：{clean(value)}" for label, value in rows if width(clean(value)) > limit]
+
+
 def render(state, view="status"):
     checkpoint = state.get("checkpoint", {}).get("current", {})
     scenario_id = checkpoint.get("baseline")
@@ -62,11 +67,16 @@ def render(state, view="status"):
             lines.append(table([("证据", eid), ("观察", record["observation"]),
                                 ("有效性", STATUS[record["validity"]]), ("范围", record["limits"])], (8, 64)))
             lines.append("来源：" + clean(record["source"]))
+            lines.extend(details([("观察", record["observation"]), ("范围", record["limits"])]))
+            if record.get("context"):
+                lines.append("实验条件：" + clean(record["context"]))
     elif view == "done":
         lines.append(table([("结果", result), ("结论", closure.get("conclusion", "尚未提交闭环结论")),
                             ("路线", {"evidence_chain": "严谨证据链", "targeted_fix": "针对性修复验证"}.get(closure.get("route"), "未登记")),
                             ("范围", closure.get("scope", "未登记")), ("限制", closure.get("limitations", "未登记"))], (8, 64)))
         lines.append("证据：" + (", ".join(closure.get("evidence", [])) or "未关联"))
+        lines.extend(details([(label, closure.get(key, "")) for label, key in
+                              (("结论", "conclusion"), ("范围", "scope"), ("限制", "limitations"))]))
         lines.append("▎ 状态卡仅展示已登记结论；证据充分性由主 agent 按用户目标核查。")
     else:
         tasks = list(state.get("task", {}).values())

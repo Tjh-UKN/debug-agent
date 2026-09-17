@@ -4,8 +4,23 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import shutil
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def replace_file(path, value):
+    """Prepare in the destination filesystem, then atomically replace one file."""
+    fd, name = tempfile.mkstemp(prefix=".install-", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def install(target, home=None, update=False):
@@ -27,7 +42,8 @@ def install(target, home=None, update=False):
                 f"直接读取 `{skill}`，按其中的命令路由与展示协议执行。不要递归调用同名 Skill。\n\n"
                 "用户参数：$ARGUMENTS\n")
         files = {Path("debug-agent.md"): text.encode("utf-8")}
-    changed = [p for p, value in files.items() if (destination / p).exists() and (destination / p).read_bytes() != value]
+    previous = {p: (destination / p).read_bytes() if (destination / p).exists() else None for p in files}
+    changed = [p for p, value in files.items() if previous[p] is not None and previous[p] != value]
     if changed and not update:
         raise ValueError("existing files differ; use --update to back up and replace managed files")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -36,10 +52,29 @@ def install(target, home=None, update=False):
         saved = backup / relative
         saved.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(destination / relative, saved)
-    for relative, value in files.items():
-        path = destination / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(value)
+    written = []
+    try:
+        for relative, value in files.items():
+            if previous[relative] == value:
+                continue
+            path = destination / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            replace_file(path, value)
+            written.append(relative)
+    except OSError as exc:
+        failures = []
+        for relative in reversed(written):
+            try:
+                path = destination / relative
+                if previous[relative] is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    replace_file(path, previous[relative])
+            except OSError:
+                failures.append(str(relative))
+        if failures:
+            raise OSError(f"update failed; rollback incomplete for {failures}; backup: {backup}") from exc
+        raise
     return destination, backup if changed else None
 
 

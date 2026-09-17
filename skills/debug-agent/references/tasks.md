@@ -92,6 +92,8 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
 
 恢复先读 show：当前 checkpoint、活跃假设、baseline、running/blocked/submitted 任务。核实正在运行的作业与产物是否属于当前版本；旧 checkpoint 是恢复线索，不是免核实的事实。没有正在执行的任务且状态明确时，直接继续 next_action。
 
+优先使用 `python <skill-dir>/scripts/recovery.py resume --case <case-dir>` 汇总上述信息；它不会变更状态或启动作业。`show` 本身也不创建锁文件，只有写入需要锁。恢复提示会指出 checkpoint 之后的更新、已失效的基线和待验收结果。没有明确案例时使用 `recovery.py list --project <cwd>`，不从多个候选中猜选。
+
 主 agent 在证据、关键决策、环境或基线变化时更新 checkpoint，而不是每个命令都记录一次。
 
 闭环 payload：
