@@ -34,6 +34,16 @@ python scripts/install.py codex
 
 安装到 `$CODEX_HOME/skills/debug-agent`，未设置时为 `~/.codex/skills/debug-agent`。已有不同版本时使用 `--update`，旧文件会先备份；更新遇到文件写入异常会回滚已写入文件，回滚本身失败时报告备份位置。新会话中可显式调用 `$debug-agent`；Skill description 允许宿主自动选择，具体是否命中由宿主判断。
 
+### Pi（含 WSL）
+
+在 Pi 所在环境的仓库目录执行：
+
+```sh
+python3 scripts/install.py pi --update
+```
+
+安装到 `~/.pi/agent/skills/debug-agent`，更新前备份已有文件，不改变模型配置。Pi 的 subagent 能力由宿主扩展提供，安装 Skill 本身不会创建调度器。
+
 ### Claude Code
 
 ```sh
@@ -77,8 +87,36 @@ Codex 当前通过 Skill 自动选择接入，未实现同等的 SessionStart �
 - 优先利用代码和已有现象，针对实际证据缺口补采中间数据。
 - 任务完成、假设成立和修复成功分别记录；无效、未决与反证不得混淆。
 - 主 agent 维护整体判断，subagent 执行有边界的任务。短小核查无需为框架制造任务。
+- 关键观察带适用范围；未检查的材料不能写成未提供。统计相同不等于张量相同，未记录不等于未执行。
+- 派工保留原始问题与材料目录，允许子 agent 推翻前提；共享前提的报告不算独立印证。
+- 排除重要假设和成功闭环前审查范围、因果条件与关键反例；证据更正后撤回依赖判断。
+
+### msprobe 数据分析
+
+内置数据契约：dump 原始顺序就是执行序；stack 按显式 API 名关联；跨端按调用栈和 shape 对应；完整定位覆盖所有卡。使用标准库工具读取 tar/tgz/zip 或解包目录，不解包/修改原包：
+
+```sh
+python skills/debug-agent/scripts/msprobe.py scan --left <一端材料> --right <另一端材料> --out <新输出目录>
+python skills/debug-agent/scripts/msprobe.py compare --left <一端材料> --right <另一端材料> --rank <卡号> --api <左端API名>
+python skills/debug-agent/scripts/msprobe.py inspect --data <单端材料> --rank <卡号> --api <API名>
+```
+
+全卡概览与完整对应表分别写入 `summary.json`、`alignment.jsonl`。未匹配、重复调用歧义、缺卡、读取错误和端口差异均保留；dtype/mask 差异作为线索，不因不同被过滤。摘要相等不等于张量相等，执行序上的首个差异不等于根因。适用范围与匹配规则见 [msprobe 数据契约](skills/debug-agent/references/msprobe.md)。
+
+## 长任务与交接
 
 长任务状态存项目 `.debug-agent/<case-id>/state.json`，包含假设、证据引用、复现场景、任务、checkpoint 与历史。Python 工具提供并发锁、原子提交和版本冲突检查；它们不判断证据真实性，也不执行模型调用。
+
+材料目录与派工上下文可直接生成：
+
+```sh
+python skills/debug-agent/scripts/materials.py <用户提供的目录或压缩包> [<其他材料> ...]
+python skills/debug-agent/scripts/case.py --case .debug-agent/<case-id> handoff --task T1
+```
+
+`handoff` 从初始化的 `materials` 路径读取目录，附上原始问题、带范围的观察与待核查假设；不会启动 agent。目录与压缩包成员可用不等于已检查。更正证据用 `supersedes`，工具保留历史并撤回依赖结论、恢复待验收状态；详细字段和局部闭环示例见 [任务协议](skills/debug-agent/references/tasks.md)。这是可检查的约束，不是因果正确性证明。
+
+新子任务使用 `case.py --case <case-dir> prepare-task --file <task.json>`，一次创建 pending 节点并返回交接上下文；之后才由宿主实际派工，reviewer 也遵循此入口。主 agent 仲裁原始证据与读取方法，不能把 reviewer 的结论自动当事实。`narrowed` 的报告应明确根因尚未确认。
 
 恢复工具提供只读快照，不要求创建锁文件，不变更任务状态：
 
@@ -93,6 +131,8 @@ python skills/debug-agent/scripts/recovery.py resume --case .debug-agent/<case-i
 
 ```sh
 python -B skills/debug-agent/scripts/test_case.py
+python -B skills/debug-agent/scripts/test_mechanisms.py
+python -B skills/debug-agent/scripts/test_msprobe.py
 python -B scripts/test_integration.py
 ```
 

@@ -10,7 +10,7 @@ Codex 使用 `$debug-agent <参数>`。Claude Code 插件使用 `/debug-agent:de
 | status / 状态 | 读取当前账本，显示任务、活跃假设、场景与下一步；只读 |
 | evidence / 证据 | 展示原始来源、观察、有效性与结论关联；缺口明确写出，不补造 |
 | again / 换个方法 | 结合已有证据重新选择有区分度的核查；不机械重复、也不无条件换方向 |
-| done-check / 验收 | 对照用户目标核查结论、证据、范围及未完成项；证据不足就明确不足，不自动宣称成功 |
+| done-check / 验收 | 对照目标核查证据范围、机制必要条件、关键反证检查与未解决矛盾；按任务协议审查 decision_review，不能仅看任务 done 或数字能复算；证据不足就明确不足 |
 | resume / 继续 | 运行 `python <skill-dir>/scripts/recovery.py resume --case <case-dir>` 读取恢复摘要，先核实作业与版本，再继续；不盲目重复提交 |
 | on / off | 执行 `scripts/control.py on` 或 `off`，保存会话启动提醒偏好；不改变运行任务或用户授权 |
 | help / 帮助 | 展示此表的简短版与当前宿主实际入口 |

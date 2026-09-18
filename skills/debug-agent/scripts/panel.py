@@ -3,13 +3,13 @@ import argparse
 import sys
 import unicodedata
 
-from case import execute
+from case import execute, inactive_evidence
 
 STATUS = {"pending": "待执行", "running": "运行中", "blocked": "受阻", "submitted": "待验收",
           "done": "已验收", "cancelled": "已取消", "open": "待核查", "supported": "有支持证据",
           "ruled_out": "已排除", "unresolved": "未决", "confirmed": "已确认",
           "valid": "有效", "invalid": "无效", "uncertain": "未确认"}
-OUTCOMES = {"root_cause": "根因已确认", "fix_verified": "修复已验证", "narrowed": "范围已缩小", "blocked": "受阻待续"}
+OUTCOMES = {"root_cause": "根因已确认", "fix_verified": "修复已验证", "narrowed": "范围已缩小，根因未确认", "blocked": "受阻待续"}
 
 
 def width(text):
@@ -61,13 +61,16 @@ def render(state, view="status"):
                             ("下一步", checkpoint.get("next_action", "根据现象和代码确定"))], (8, 64)))
     elif view == "evidence":
         records = state.get("evidence", {})
+        inactive = inactive_evidence(state)
         if not records:
             lines.append("▎ 尚无已登记证据。")
         for eid, record in records.items():
             lines.append(table([("证据", eid), ("观察", record["observation"]),
-                                ("有效性", STATUS[record["validity"]]), ("范围", record["limits"])], (8, 64)))
+                                ("有效性", "不可用于支持结论" if eid in inactive else STATUS[record["validity"]]),
+                                ("观察范围", record.get("scope", "旧记录未单列，请核对原始来源")),
+                                ("限制", record["limits"])], (8, 64)))
             lines.append("来源：" + clean(record["source"]))
-            lines.extend(details([("观察", record["observation"]), ("范围", record["limits"])]))
+            lines.extend(details([("观察", record["observation"]), ("观察范围", record.get("scope", "")), ("限制", record["limits"])]))
             if record.get("context"):
                 lines.append("实验条件：" + clean(record["context"]))
     elif view == "done":

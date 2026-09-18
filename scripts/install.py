@@ -1,4 +1,4 @@
-"""Install the Codex skill or an optional Claude Code /debug-agent alias."""
+"""Install the Codex/Pi skill or an optional Claude Code /debug-agent alias."""
 import argparse
 from datetime import datetime, timezone
 import os
@@ -24,10 +24,12 @@ def replace_file(path, value):
 
 
 def install(target, home=None, update=False):
+    if target not in {"codex", "pi", "claude-alias"}:
+        raise ValueError("unknown installation target")
     home = Path(home).resolve() if home else Path.home()
-    if target == "codex":
+    if target in {"codex", "pi"}:
         codex = Path(os.environ.get("CODEX_HOME", home / ".codex")) if home == Path.home() else home / ".codex"
-        destination = codex / "skills" / "debug-agent"
+        destination = codex / "skills" / "debug-agent" if target == "codex" else home / ".pi" / "agent" / "skills" / "debug-agent"
         source = ROOT / "skills" / "debug-agent"
         require_safe = destination.resolve() == source.resolve()
         if require_safe:
@@ -80,7 +82,7 @@ def install(target, home=None, update=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("target", choices=("codex", "claude-alias"))
+    parser.add_argument("target", choices=("codex", "pi", "claude-alias"))
     parser.add_argument("--home", help="override home directory for isolated installation")
     parser.add_argument("--update", action="store_true")
     args = parser.parse_args()

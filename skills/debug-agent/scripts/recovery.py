@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from case import execute, read_json
+from case import execute, inactive_evidence, read_json
 
 
 def discover(start):
@@ -47,6 +47,13 @@ def snapshot(state):
         if task["status"] in pending:
             pending[task["status"]].append(task)
     warnings = []
+    inactive = sorted(inactive_evidence(state))
+    if inactive:
+        warnings.append("以下证据无效、已撤回或依赖失效前提，不能继续支持结论：" + ", ".join(inactive))
+    review = [f"{kind}:{key}" for kind in ("hypothesis", "task", "scenario", "checkpoint")
+              for key, item in state.get(kind, {}).items() if item.get("needs_review")]
+    if review:
+        warnings.append("证据更正影响以下判断；先重审前提，不自动重跑：" + ", ".join(review))
     if state["status"] == "closed":
         warnings.append("案例已关闭；若用户要求继续，先核对旧结论并说明重开原因。")
     if not checkpoint:
@@ -66,7 +73,7 @@ def snapshot(state):
     return {"case": state["case"], "case_rev": state["rev"], "status": state["status"],
             "closure": state.get("closure"), "checkpoint": checkpoint, "baseline": baseline,
             "tasks": pending, "hypotheses": state.get("hypothesis", {}),
-            "evidence": state.get("evidence", {}), "warnings": warnings,
+            "evidence": state.get("evidence", {}), "inactive_evidence": inactive, "warnings": warnings,
             "job_execution": "none; read-only snapshot"}
 
 

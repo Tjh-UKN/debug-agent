@@ -184,6 +184,16 @@ class IntegrationTests(unittest.TestCase):
         self.assertIn("$ARGUMENTS", alias)
         self.assertFalse((self.home / ".claude/settings.json").exists())
 
+    def test_pi_install_includes_msprobe_reader_and_preserves_settings(self):
+        config = self.home / '.pi/agent/settings.json'
+        config.parent.mkdir(parents=True)
+        config.write_text('{"defaultModel":"unchanged"}', encoding='utf-8')
+        destination, _ = install('pi', self.home)
+        self.assertEqual(destination, self.home / '.pi/agent/skills/debug-agent')
+        self.assertTrue((destination / 'scripts/msprobe.py').is_file())
+        self.assertTrue((destination / 'references/msprobe.md').is_file())
+        self.assertEqual(config.read_text(), '{"defaultModel":"unchanged"}')
+
     def test_interrupted_update_restores_previous_files(self):
         destination, _ = install("codex", self.home)
         first = destination / "SKILL.md"

@@ -27,7 +27,10 @@ class CaseTests(unittest.TestCase):
         return case.execute(self.root, "put", value, kind)["record"]
 
     def evidence(self, eid="E1", validity="valid"):
-        return {"id": eid, "rev": 0, "observation": "原表现保留", "source": "fixture.log:2", "context": "模拟场景，非真实设备实验", "limits": "仅合成测试", "validity": validity}
+        return {"id": eid, "rev": 0, "observation": "原表现保留", "source": "fixture.log:2", "scope": "合成局部场景", "context": "模拟场景，非真实设备实验", "limits": "仅合成测试", "validity": validity}
+
+    def review(self, eid="E1"):
+        return {"scope_check": "仅合成小场景，不外推", "causal_link": "合成分支与观察一致", "countercheck": "已核查合成反例", "evidence": [eid], "open_issues": []}
 
     def hypothesis(self, hid="H1"):
         return {"id": hid, "rev": 0, "claim": "原因 A", "basis": "源码分支", "prediction": "局部修改应改变结果", "reason": "可核查", "status": "open"}
@@ -100,7 +103,7 @@ class CaseTests(unittest.TestCase):
         self.put("evidence", self.evidence())
         self.put("scenario", {"id": "S64", "rev": 0, "description": "64 卡", "changes": "减少规模", "cost": "低", "reason": "表现一致", "reproduction": "retained", "evidence": ["E1"]})
         self.put("checkpoint", {"id": "current", "rev": 0, "summary": "小场景闭环", "next_action": "交付", "reason": "足够证据", "environment": "fixture", "baseline": "S64"})
-        closure = {"rev": self.show()["rev"], "outcome": "root_cause", "route": "evidence_chain", "conclusion": "原因 A", "scope": "64 卡", "limitations": "4096 卡无权限", "acceptance_check": "证据链满足定位要求", "evidence": ["E1"]}
+        closure = {"rev": self.show()["rev"], "outcome": "root_cause", "route": "evidence_chain", "conclusion": "原因 A", "scope": "64 卡", "limitations": "4096 卡无权限", "acceptance_check": "证据链满足定位要求", "evidence": ["E1"], "decision_review": self.review()}
         case.execute(self.root, "close", closure)
         self.assertEqual(self.show()["status"], "closed")
         with self.assertRaisesRegex(ValueError, "case closed"):

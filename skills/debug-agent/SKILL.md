@@ -1,6 +1,6 @@
 ---
 name: debug-agent
-description: Diagnose AI training or inference accuracy problems, numerical divergence, NaN/Inf, CPU/GPU/NPU result mismatches, and distributed-scale precision anomalies. Use when investigating causes, checking an existing diagnosis, designing diagnostic experiments, or reducing an expensive reproducer; 中文场景包括精度定位、精度异常、溢出定位、结果不一致和复现场景缩减. Does not apply to ordinary feature development, generic code review, or simple syntax fixes.
+description: Diagnose AI training or inference accuracy problems, numerical divergence, NaN/Inf, CPU/GPU/NPU mismatches, msprobe dump comparisons, and distributed-scale precision anomalies. Use when investigating causes, checking a diagnosis, designing diagnostic experiments, or reducing an expensive reproducer; 中文场景包括精度定位、msprobe 数据对比、溢出定位、结果不一致和复现场景缩减. Does not apply to ordinary feature development, generic code review, or simple syntax fixes.
 ---
 
 # 假设驱动的精度诊断 Agent
@@ -22,15 +22,21 @@ description: Diagnose AI training or inference accuracy problems, numerical dive
 - 原问题表现被保留后，可将缩减场景作为当前问题，在该场景完成闭环。大场景验证可作为后续项，不是完成前提。
 - 证据已充分就停止。无法完成时交付已缩小范围、具体缺口和可恢复的下一步，不将受阻或未决写成成功。
 
+关键观察保留来源与适用范围；区分材料已提供、实际检查过、未提供。局部观察要推及整体，先核查覆盖或说明外推依据。缩小阅读范围不是复现场景缩减。msprobe 按下方专门入口读取；其他多文件材料可用 [材料目录工具](scripts/materials.py) 列出用户给定路径（含压缩包成员）。
+
+**msprobe 是已知协议**：dump 原始记录顺序保证执行序；stack 用显式 API 列表关联调用栈；两端对应同时核对栈与 shape；完整定位覆盖所有卡。处理 msprobe 时先读 [数据契约与工具入口](references/msprobe.md)，使用配套读取/对齐工具取得原始来源与全卡概览，不重新猜测格式，不按 API 编号或 stack 分组号当执行位置。
+
 ## 选择下一步
 
 优先选择成本合理、结果可信、最能减少关键不确定性的动作。行动可以是代码核查、复核数据或结论、实验、缩减场景、针对性修改或补充观测，无固定工序。
 
 - 假设来自具体现象、事实或代码逻辑；记录依据、可核查预测及证据关系。不强凑数量，不默认原因互斥或只有一个根因。
+- 优先核查最能改变判断的前提。比较前确认两者是对应对象、阶段和范围，核对中间的变形/分片/归约关系；存在矛盾时先查读取与可比性，再引入隐藏状态。每个节点回答一个判断缺口，不为“完整还原”无限扩展统计。
 - 优先利用现有代码与实验现象。多个解释并存时，选择能区分它们的核查；只有证据缺口确实需要时才补采中间数据，采集范围由缺口决定。
 - 预计频繁实验且成本高时，考虑减少规模、路径、数据或运行时长；保留原问题表现即可使用，不追求绝对最小。缩减未复现不等于原因假设被否定。
 - 实验应说明要核查什么、哪些不同结果会改变判断。确认预期输入、配置、执行路径和实际加载产物生效后，才用结果支持或否定假设。
 - 结果矛盾时检查实验有效性并修订判断；允许细化、剪枝、回溯和重新打开假设。未决、无效实验、反证必须区分；偶发问题的一次阴性结果不直接构成反证。
+- 排除重要假设或确认根因前，核查最可能推翻该判断的关键前提，选择成本合理的反证检查。数字可复算不等于因果成立；已有材料存在冲突时，先核查范围、测量对象和采集语义，再引入不可观测机制。撤回前提时同步重审依赖结论，不能只追加反例而保留旧排除判断。
 - 相同条件重复实验要有具体价值，如估计偶发性；无新信息时重新审视假设、观测或实验设计。无实验条件时继续利用代码和现有材料，不伪造已执行验证。
 
 只在关键决策处保存简短的“依据 → 动作 → 预期区分 → 实际结果/影响”，不要求每次工具调用填写表格或展示内部思考过程。
@@ -41,14 +47,17 @@ description: Diagnose AI training or inference accuracy problems, numerical dive
 
 - 主 agent 维护全局假设、复现场景、决策和验收；subagent 回答有边界的问题。任务完成不代表假设成立。
 - 有独立、可验收节点且宿主允许时使用 subagent；只展开近期必要节点。交给子 agent 问题、证据、可写范围、实验资源和验收条件，不把待验证猜想包装成答案。
-- 主 agent 合并证据、处理矛盾后关闭任务。共享代码、设备或互相影响的实验需要隔离或串行；原生工具不可用时由主 agent 执行同一任务，不虚构已派工。
+- 派工前用任务协议的 `prepare-task` 创建持久节点并生成交接上下文；已有节点用 `handoff`，reviewer 同样登记。交接保留原始问题、完整材料目录、对齐依据及待验证推断，允许反驳前提。子 agent 回答节点问题后立即提交，新发现由主 agent 决定是否另开节点；不在结束后补造在途状态。
+- 主 agent 合并证据、处理矛盾后关闭任务。验收审查“观察如何推出结论”，不能只复算数字；关键推断需要时交独立 reviewer。reviewer 的提取器也可能出错，争议按原始记录、读取方法和适用条件仲裁，不按身份或报告数量决定。共享资源需隔离或串行；无原生工具时主 agent 执行同一核查，不虚构派工。
 - 在关键证据或决策变化、长实验启动和交接前及时落盘。恢复后复核运行中的作业及产物、代码与环境，防止重复提交或混用不同版本证据。
 
 需要跨轮恢复、委派或持续实验时，使用项目 `.debug-agent/<case-id>/` 与 [任务协议](references/tasks.md) 保存必要状态；已有案例先恢复。记录服务于接续判断和避免重复实验，不把建账、填表或生成面板作为开始分析代码的前置条件。短小核查直接完成。
 
+报告、卡片与账本采用同一证据强度：`narrowed` 是范围/候选已缩小，根因未确认，不能通过重新命名结论层级宣称根因已证实。区分起因、传播放大环节和症状；未核实的配置不能推出固定的训练/更新后果。
+
 ## 按需资料
 
-- 精度实验涉及累积误差、对齐、缩减耦合或偶发性时，读 [领域决策提示](references/precision.md)。这些是候选检查，不能代替当前证据。
+- 分析统计 dump、跨设备/分片差异或引用框架实现时，读 [领域决策提示](references/precision.md) 中的观测语义；累积误差、缩减耦合或偶发性也在此按需查阅。这些提示不能代替当前证据。
 - 用用户的真实问题评价诊断时，读 [评估约定](references/evaluation.md)。看假设依据、下一步选择、实验设计、结果解释和结论，按实际暴露的问题改进；配套脚本通过测试不代表诊断能力通过验收。
 - 只有显式参数为 `status/evidence/again/done-check/resume/on/off/help` 时读 [命令路由](references/commands.md)；查询不启动新的诊断。需要运行展示时读 [展示协议](references/display.md)，沿用专业卡片风格，先说明诊断判断与下一步，面板只辅助呈现。
 - 安装、能力边界及可移植使用见 [接入说明](references/integration.md)。此 Skill 不自带调度器、设备权限或实验执行服务。

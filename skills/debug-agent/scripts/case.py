@@ -44,7 +44,109 @@ def refs(state, data, field, kind):
 
 
 def valid_evidence(state, ids):
-    require(ids and all(state["evidence"][i]["validity"] == "valid" for i in ids), "valid evidence required")
+    invalid = inactive_evidence(state)
+    require(ids and all(i not in invalid for i in ids), "valid evidence required (not superseded or dependent on inactive evidence)")
+
+
+def inactive_evidence(state):
+    """Keep observations immutable; compute whether they can still support a claim."""
+    records = state.get("evidence", {})
+    inactive = {eid for eid, item in records.items() if item["validity"] != "valid"}
+    inactive.update(eid for item in records.values() for eid in item.get("supersedes", []))
+    while True:
+        more = {eid for eid, item in records.items() if set(item.get("depends_on", [])) & inactive}
+        if more <= inactive:
+            return inactive
+        inactive.update(more)
+
+
+def decision_review(state, data):
+    review = data.get("decision_review")
+    require(isinstance(review, dict), "decision_review required for exclusion, confirmation or successful closure")
+    nonempty(review, "scope_check", "causal_link", "countercheck")
+    ids = refs(state, review, "evidence", "evidence")
+    valid_evidence(state, ids)
+    require(review.get("open_issues") == [], "resolve material open_issues before a decisive conclusion")
+
+
+def record_evidence(item):
+    review = item.get("decision_review")
+    return set(item.get("evidence", [])) | set(review.get("evidence", []) if isinstance(review, dict) else [])
+
+
+def reconcile_correction(state, correction, newly_inactive):
+    """Withdraw dependent decisions, not historical work or the raw observations."""
+    inactive = newly_inactive
+    affected = set()
+    while True:
+        more = {hid for hid, item in state["hypothesis"].items()
+                if record_evidence(item) & inactive or set(item.get("parents", [])) & affected}
+        if more <= affected:
+            break
+        affected.update(more)
+    affected_scenarios = {sid for sid, item in state["scenario"].items() if record_evidence(item) & inactive}
+    while True:
+        more = {sid for sid, item in state["scenario"].items() if item.get("parent") in affected_scenarios}
+        if more <= affected_scenarios:
+            break
+        affected_scenarios.update(more)
+    affected_tasks = {tid for tid, item in state["task"].items()
+                      if (record_evidence(item) | set(item.get("result", {}).get("evidence", []))) & inactive
+                      or set(item.get("hypotheses", [])) & affected or item.get("scenario") in affected_scenarios}
+    while True:
+        more = {tid for tid, item in state["task"].items() if set(item.get("depends_on", [])) & affected_tasks}
+        if more <= affected_tasks:
+            break
+        affected_tasks.update(more)
+    reason = "Evidence correction " + correction + "; reassess dependent conclusions"
+    for kind in ("hypothesis", "task", "scenario", "checkpoint"):
+        for item_id, item in state[kind].items():
+            refs_used = record_evidence(item) | set(item.get("result", {}).get("evidence", []))
+            hit = refs_used & inactive or (kind == "hypothesis" and item_id in affected)
+            hit = hit or (kind == "task" and item_id in affected_tasks)
+            hit = hit or (kind == "scenario" and item_id in affected_scenarios)
+            hit = hit or (kind == "checkpoint" and item.get("baseline") in affected_scenarios)
+            if not hit:
+                continue
+            item.update(needs_review=reason, rev=item["rev"] + 1, updated_at=now())
+            if kind == "hypothesis":
+                item["status"] = "unresolved"
+                item.pop("decision_review", None)
+            elif kind == "scenario" and item["reproduction"] == "retained":
+                item["reproduction"] = "uncertain"
+            elif kind == "task" and item["status"] == "done":
+                item["status"] = "submitted"
+    if state["status"] == "closed":
+        # The old closure remains in history. A correction is a reason to review,
+        # not proof that the opposite conclusion is true.
+        state.update(status="active", closure=None)
+
+
+def handoff(state, task_id):
+    from materials import inventory
+    require(task_id in state["task"], "unknown task")
+    task = state["task"][task_id]
+    paths = state["case"].get("materials", [])
+    material_list = inventory(paths)
+    inactive = inactive_evidence(state)
+    observations = {eid: {**item, "usable_as_support": eid not in inactive}
+                    for eid, item in state["evidence"].items()}
+    available = {item["source"] for item in material_list["items"]}
+    inspected = {source for eid, item in state["evidence"].items() if eid not in inactive
+                 for source in item.get("inspected", [])}
+    return {"original_problem": state["case"], "case_rev": state["rev"], "task": task,
+            "scenario": state["scenario"].get(task.get("scenario")),
+            "available_materials": material_list, "recorded_observations": observations,
+            "coverage": {"reported_inspected": sorted(inspected),
+                         "not_reported_inspected": sorted(available - inspected),
+                         "unlisted_inspections": sorted(inspected - available),
+                         "meaning": "Agent-reported source visits only; read each observation's scope for actual fields/ranks examined."},
+            "hypotheses_to_check": {hid: state["hypothesis"][hid] for hid in task.get("hypotheses", [])},
+            "instructions": "Read source scope and limits. Recorded validity is an agent assessment, not a guarantee. "
+                            "Challenge task premises; an unsupported premise is a valid finding. Report observations, "
+                            "inferences, counterexamples and unexamined scope separately. Do not infer missing data "
+                            "from a parent agent's selection. Shared sources are not independent confirmations.",
+            "warnings": ([] if paths else ["No material paths registered; obtain the original input inventory before generalizing."])}
 
 
 def version_matches(old, data):
@@ -74,8 +176,15 @@ def put(state, kind, data):
     version_matches(old, data)
     if kind == "evidence":
         require(old is None, "evidence is immutable: append a correction with a new ID")
-        nonempty(data, "observation", "source", "context", "limits")
+        nonempty(data, "observation", "source", "scope", "context", "limits")
+        require(isinstance(data.get("inspected", []), list) and
+                all(isinstance(v, str) and v.strip() for v in data.get("inspected", [])), "inspected: list of inventory source IDs required")
         require(data.get("validity") in {"valid", "invalid", "uncertain"}, "invalid evidence validity")
+        refs(state, data, "depends_on", "evidence")
+        supersedes = refs(state, data, "supersedes", "evidence")
+        require(not set(supersedes) & set(data.get("depends_on", [])), "correction cannot depend on evidence it supersedes")
+        if supersedes:
+            nonempty(data, "correction_reason")
     elif kind == "hypothesis":
         nonempty(data, "claim", "basis", "prediction", "reason")
         require(data.get("status") in {"open", "supported", "ruled_out", "unresolved", "confirmed"}, "invalid hypothesis status")
@@ -84,6 +193,8 @@ def put(state, kind, data):
         acyclic(state, kind, data["id"], parents)
         if data["status"] in {"supported", "ruled_out", "confirmed"}:
             valid_evidence(state, ids)
+        if data["status"] in {"ruled_out", "confirmed"}:
+            decision_review(state, data)
     elif kind == "scenario":
         nonempty(data, "description", "changes", "cost", "reason")
         require(data.get("reproduction") in {"original", "retained", "not_observed", "different", "uncertain"}, "invalid reproduction state")
@@ -120,14 +231,20 @@ def put(state, kind, data):
         if baseline:
             require(state["scenario"][baseline]["reproduction"] in {"original", "retained"}, "baseline must preserve the problem")
     item = copy.deepcopy(data)
+    if kind != "evidence":
+        item.pop("needs_review", None)
     item.update(rev=data["rev"] + 1, updated_at=now())
+    before = inactive_evidence(state) if kind == "evidence" and data.get("supersedes") else set()
     state[kind][data["id"]] = item
+    if kind == "evidence" and data.get("supersedes"):
+        reconcile_correction(state, data["id"], inactive_evidence(state) - before)
     return item
 
 
 def change(state, command, data, kind=None):
     require(state.get("schema") == 1, "unsupported schema")
-    require(state["status"] == "active" or command == "reopen", "case closed: use reopen with a reason")
+    correction = command == "put" and kind == "evidence" and data.get("supersedes")
+    require(state["status"] == "active" or command == "reopen" or correction, "case closed: use reopen with a reason")
     if command == "put":
         result = put(state, kind, data)
     elif command in {"submit", "accept"}:
@@ -152,7 +269,12 @@ def change(state, command, data, kind=None):
         else:
             require(task["status"] == "submitted", "task must be submitted")
             nonempty(data, "reason")
-            task.update(status="done", review=data["reason"])
+            disposition = data.get("disposition", "usable")
+            require(disposition in {"usable", "not_usable"}, "invalid review disposition")
+            if disposition == "usable" and task["result"]["outcome"] in {"supports", "contradicts"}:
+                valid_evidence(state, task["result"].get("evidence", []))
+            task.update(status="done", review=data["reason"], disposition=disposition)
+            task.pop("needs_review", None)
         task.update(rev=task["rev"] + 1, updated_at=now())
         result = task
     elif command == "close":
@@ -166,6 +288,7 @@ def change(state, command, data, kind=None):
             valid_evidence(state, ids)
             require(data.get("route") in {"evidence_chain", "targeted_fix"}, "closure route required")
             nonempty(data, "acceptance_check")
+            decision_review(state, data)
             require(all(t["status"] in {"done", "cancelled"} for t in state["task"].values()),
                     "finish or explicitly cancel remaining tasks before successful closure")
         state.update(status="closed", closure=copy.deepcopy(data))
@@ -232,11 +355,13 @@ def execute(directory, command, data=None, kind=None, history=False):
         directory.mkdir(parents=True, exist_ok=True)
     require(directory.is_dir(), "case directory does not exist; use init")
     path = directory / "state.json"
-    if command == "show":
+    if command in {"show", "handoff"}:
         # Writers replace a complete JSON file atomically. Readers need no write
         # permission or lock file and can inspect an in-flight case snapshot.
         state = read_json(path)
         require(state.get("schema") == 1, "unsupported schema")
+        if command == "handoff":
+            return {"case_path": str(directory), **handoff(state, data["task_id"])}
         if not history:
             state.pop("history", None)
         return state
@@ -244,12 +369,23 @@ def execute(directory, command, data=None, kind=None, history=False):
         if command == "init":
             require(not path.exists(), "case already exists: use show to resume")
             nonempty(data, "title", "goal", "symptom", "acceptance")
+            data = copy.deepcopy(data)
+            if "materials" in data:
+                require(isinstance(data["materials"], list) and all(isinstance(p, str) and p.strip() for p in data["materials"]),
+                        "materials must be a list of supplied local paths")
+                data["materials"] = [str(Path(p).expanduser().resolve()) for p in data["materials"]]
             state = {"schema": 1, "rev": 0, "status": "active", "case": data,
                      "updated_at": now(), "closure": None, "history": []}
             state.update({key: {} for key in KINDS})
             atomic_write(path, state)
             return {"case": str(path), "rev": 0}
         state = read_json(path)
+        if command == "prepare-task":
+            require(data.get("rev") == 0 and data.get("status") == "pending", "prepare-task creates a new pending task")
+            require(data.get("id") not in state["task"], "task already exists; use handoff to resume")
+            change(state, "put", data, "task")
+            atomic_write(path, state)
+            return {"case_path": str(directory), "execution_started": False, **handoff(state, data["id"])}
         result = change(state, command, data, kind)
         atomic_write(path, state)
         return {"case_rev": state["rev"], "record": result}
@@ -259,15 +395,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case", required=True, help="case directory, e.g. .debug-agent/nan-001")
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("init", "put", "submit", "accept", "close", "reopen"):
+    for command in ("init", "put", "submit", "accept", "close", "reopen", "prepare-task"):
         child = commands.add_parser(command)
         child.add_argument("--file", required=True, help="UTF-8 JSON payload path")
         if command == "put":
             child.add_argument("--kind", choices=KINDS, required=True)
     commands.add_parser("show").add_argument("--history", action="store_true")
+    commands.add_parser("handoff").add_argument("--task", required=True)
     args = parser.parse_args()
     try:
-        result = execute(args.case, args.command, read_json(args.file) if hasattr(args, "file") else None,
+        data = read_json(args.file) if hasattr(args, "file") else {"task_id": args.task} if hasattr(args, "task") else None
+        result = execute(args.case, args.command, data,
                          getattr(args, "kind", None), getattr(args, "history", False))
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
