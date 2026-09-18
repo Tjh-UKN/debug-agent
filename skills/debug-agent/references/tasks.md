@@ -125,8 +125,8 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
   "evidence":["E1"],"acceptance_check":"说明如何满足用户验收",
   "decision_review":{
     "scope_check":"证据实际覆盖当前小场景；外推依据或不外推的边界",
-    "causal_link":"哪些运行事实证明该机制及其必要条件，而不只是数值相关",
-    "countercheck":"最关键的可推翻前提、实际核查动作与结果",
+    "causal_link":"承重事实及必要前提；这些事实如何区分起因候选，而不只是解释传播放大",
+    "countercheck":"最强替代解释或可推翻前提，实际核查及其判别依据；排除时说明必要预测为何成立",
     "evidence":["E1"],"open_issues":[]
   },
   "limitations":"原大场景未验证，后续可以补充，不阻碍当前闭环"
@@ -135,7 +135,13 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
 
 成功 outcome 为 root_cause/fix_verified，route 为 evidence_chain/targeted_fix，两条路径任选其一。必须有有效证据和验收说明，无运行中或待验收任务；剩余非必要任务应说明理由后取消，不为关账伪造完成。未完成可用 narrowed/blocked，说明下一步与缺失条件，不称为成功。
 
-`decision_review` 仅用于重要排除、确认与成功闭环，不要求每次工具调用填写。反证核查可以复核已有材料，不强制实验或新增数据。`open_issues` 列出足以改变此结论的未解决问题；非空时应保留 supported/unresolved 或 narrowed，不通过删掉问题来关账。不影响当前结论的边界写在 limitations，例如原大场景未验证。脚本检查有效引用和审查项齐全，无法判断文字是否真实、范围外推是否合理或因果成立；这些仍由主 agent 对照原始材料负责。
+`decision_review` 仅用于重要排除、确认与成功闭环，按 [核心技能的三类关键判断](../SKILL.md#三类关键判断) 使用上述现有字段，不要求每次工具调用填写。反证核查可以复核已有材料，不强制实验或新增数据。
+
+假设的 confirmed 只确认该 claim，不自动满足整个案例的完成标准。`acceptance_check` 必须对照初始化的 goal/symptom/acceptance 与当前保留表现的场景，不能把“某个传播或放大机制成立”改写成用户已经得到根因答案。
+
+`open_issues` 保留足以改变本次判断的问题；用于案例闭环时，以原始目标为准，而不是以临时缩窄的 claim 为准。仍会改变根因归属或修复位置的候选属于阻断项；不能因为它不改变“存在放大”这一子结论，就移入 limitations 或另一个 unresolved 假设后关闭为 root_cause。重要前提未核实则保留 supported/unresolved 或 narrowed。仅影响外推的边界可写入 limitations，例如小场景已闭环而原大场景未验证；无关的未决假设无需全部解决。
+
+脚本检查有效引用和审查项齐全，无法判断文字是否真实、范围外推是否合理或因果成立；字段通过与 reviewer 同意均不是语义正确的保证，仍由主 agent 对照原始材料负责。
 
 兼容：schema 1 的旧案例和历史可继续读取；新证据需要 scope，新的 confirmed/ruled_out 或成功闭环需要 decision_review。更新旧记录时依据原始材料补齐，不能把旧结论自动迁移成已通过本轮审查。
 
