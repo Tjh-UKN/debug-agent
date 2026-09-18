@@ -71,6 +71,7 @@ description: Diagnose AI training or inference accuracy problems, numerical dive
 
 ## 按需资料
 
+- 不确定训练异常应看哪个 step、前反向边界或如何选择低成本对照时，读 [训练定位入口](references/training.md)；已有数据优先，不把新采集或实验当作必经步骤。
 - 分析统计 dump、跨设备/分片差异或引用框架实现时，读 [领域决策提示](references/precision.md) 中的观测语义；累积误差、缩减耦合或偶发性也在此按需查阅。这些提示不能代替当前证据。
 - 用用户的真实问题评价诊断时，读 [评估约定](references/evaluation.md)。看假设依据、下一步选择、实验设计、结果解释和结论，按实际暴露的问题改进；配套脚本通过测试不代表诊断能力通过验收。
 - 只有显式参数为 `status/evidence/again/done-check/resume/on/off/help` 时读 [命令路由](references/commands.md)；查询不启动新的诊断。需要运行展示时读 [展示协议](references/display.md)，沿用专业卡片风格，先说明诊断判断与下一步，面板只辅助呈现。

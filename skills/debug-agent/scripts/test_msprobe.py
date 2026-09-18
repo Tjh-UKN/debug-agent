@@ -7,6 +7,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 import msprobe as m
@@ -123,6 +124,41 @@ class ReaderTests(unittest.TestCase):
         self.assertNotEqual(m.normalize_frame(a), m.normalize_frame(b.replace('run(x)', 'run(y)')))
         self.assertEqual(m.normalize_frame(frame(root='/left'), '/left'), m.normalize_frame(frame(root='/right'), '/right'))
 
+    def test_boundary_evidence_separates_input_and_output_without_equality_claim(self):
+        a, b = dump({'Tensor.mul.0.forward': operation(100)}), dump({'Tensor.mul.9.forward': operation(1)})
+        pair = next(m.align(a, b))
+        result = m.boundary_evidence(pair['left'], pair['right'], m.compare_records(pair['left'], pair['right']))
+        self.assertEqual(result['input']['statistics']['equal'], 4)
+        self.assertEqual(result['input']['statistics']['different'], 0)
+        self.assertEqual(result['output']['largest_norm_absolute']['absolute_difference'], 99)
+        self.assertEqual(result['output']['largest_norm_relative']['path'], '/output/0/Norm')
+        self.assertNotIn('root_cause', result)
+
+    def test_boundary_evidence_keeps_nonfinite_missing_zero_and_metadata(self):
+        a, b = operation(1e-14), operation(0)
+        a['input_kwargs']['mask'] = {**tensor(dtype='torch.bool'), 'Norm': None, 'Mean': None, 'Max': True, 'Min': False}
+        b['input_kwargs']['mask'] = tensor(float('inf'))
+        a['input_args'][0]['Norm'] = float('nan')
+        da, db = dump({'Tensor.mul.0.forward': a}), dump({'Tensor.mul.0.forward': b})
+        pair = next(m.align(da, db))
+        result = m.boundary_evidence(pair['left'], pair['right'], m.compare_records(pair['left'], pair['right']))
+        self.assertGreater(result['input']['statistics']['nonfinite'], 0)
+        self.assertGreater(result['input']['statistics']['unavailable'], 0)
+        self.assertEqual(result['output']['largest_norm_absolute']['left'], 1e-14)
+        self.assertIsNone(result['output']['largest_norm_absolute']['relative_to_right'])
+        self.assertTrue(any(c['path'].endswith('/mask/dtype') for c in result['metadata_changes']))
+
+    def test_root_output_tensor_stays_in_output_group(self):
+        a, b = operation(), operation()
+        a['output'], b['output'] = tensor(100), tensor(1)
+        pair = next(m.align(dump({'Tensor.mul.0.forward': a}), dump({'Tensor.mul.0.forward': b})))
+        result = m.boundary_evidence(pair['left'], pair['right'], m.compare_records(pair['left'], pair['right']))
+        self.assertEqual(result['input']['paired_ports'], 1)
+        self.assertEqual(result['input']['statistics']['different'], 0)
+        self.assertEqual(result['output']['paired_ports'], 1)
+        self.assertEqual(result['output']['statistics']['different'], 3)
+        self.assertEqual(result['output']['largest_norm_absolute']['path'], '/output/Norm')
+
 
 class SourceTests(unittest.TestCase):
     def setUp(self):
@@ -141,6 +177,83 @@ class SourceTests(unittest.TestCase):
         (folder/'dump.json').write_text(json.dumps({'data': data}), encoding='utf-8')
         (folder/'stack.json').write_text(json.dumps({'999': [list(data), [frame()]]}), encoding='utf-8')
         return folder
+
+    def test_query_pages_each_rank_without_source_access_and_retains_empty_ranks(self):
+        for side in ('left', 'right'):
+            for rank in (0, 7):
+                folder = self.write_rank(side, rank, norm=100 if side == 'left' and rank == 7 else 1)
+                data = json.loads((folder/'dump.json').read_text(encoding='utf-8'))['data']
+                data['Tensor.mul.8.forward'] = operation(2)
+                data['Tensor.mul.9.forward'] = operation(3, recompute=True)
+                (folder/'dump.json').write_text(json.dumps({'data': data}), encoding='utf-8')
+                (folder/'stack.json').write_text(json.dumps({'g': [list(data), [frame()]]}), encoding='utf-8')
+            self.write_rank(side, 9)
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        with patch.object(m, 'Source', side_effect=AssertionError('query must not reopen sources')):
+            result = m.query_scan(self.root/'out', api='Tensor.mul.*', phase='forward', limit=1)
+        self.assertEqual([r['rank'] for r in result['ranks']], ['0', '7', '9'])
+        self.assertEqual([r['match_count'] for r in result['ranks']], [2, 2, 1])
+        self.assertEqual([r['next_offset'] for r in result['ranks']], [1, 1, None])
+        seven = result['ranks'][1]['rows'][0]
+        self.assertEqual(seven['boundary_evidence']['output']['largest_norm_absolute']['absolute_difference'], 99)
+        second = m.query_scan(self.root/'out', phase='forward', limit=1, offset=1)
+        self.assertEqual(second['ranks'][1]['rows'][0]['left']['api'], 'Tensor.mul.8.forward')
+        self.assertEqual(second['ranks'][2]['rows'], [])
+        recompute = m.query_scan(self.root/'out', phase='recompute')
+        self.assertEqual([r['match_count'] for r in recompute['ranks']], [1, 1, 0])
+        self.assertEqual(recompute['ranks'][2]['rows'], [])
+        self.assertTrue(recompute['ranks'][0]['sources']['left']['dump_sha256'])
+
+    def test_query_retains_missing_rank_and_legacy_scan_limits(self):
+        self.write_rank('left', 0)
+        self.write_rank('right', 0)
+        self.write_rank('left', 7)
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        path = self.root/'out/alignment.jsonl'
+        rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+        for row in rows:
+            row.pop('boundary_evidence', None)
+        path.write_text(''.join(json.dumps(r)+'\n' for r in rows), encoding='utf-8')
+        result = m.query_scan(self.root/'out')
+        self.assertFalse(result['scan_coverage']['coverage_complete'])
+        self.assertEqual(result['ranks'][0]['matched_rows_without_boundary_evidence'], 1)
+        self.assertEqual(result['ranks'][1]['rows'][0]['reason'], 'peer_rank_missing')
+        with self.assertRaises(ValueError):
+            m.query_scan(self.root/'out', rank='99')
+        for options in ({'limit': 0}, {'offset': -1}):
+            with self.assertRaises(ValueError):
+                m.query_scan(self.root/'out', **options)
+
+    def test_query_cli_matches_right_api_and_preserves_backward_role_warning(self):
+        for side, index in (('left', 2), ('right', 90)):
+            folder = self.write_rank(side, 0)
+            fwd, bwd = f'Functional.linear.{index}.forward', f'Functional.linear.{index}.backward'
+            output = [tensor(5)] if side == 'left' else [tensor(6), tensor(7)]
+            data = {fwd: operation(), bwd: {'input': [tensor()], 'output': output}}
+            (folder/'dump.json').write_text(json.dumps({'data': data}), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [[fwd], [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        result = subprocess.run([sys.executable, str(Path(m.__file__)), 'query', '--scan', str(self.root/'out'),
+            '--api', 'Functional.linear.90.*', '--phase', 'backward'], capture_output=True, encoding='utf-8', check=True)
+        row = json.loads(result.stdout)['ranks'][0]['rows'][0]
+        self.assertEqual(row['left']['api'], 'Functional.linear.2.backward')
+        self.assertTrue(row['role_check_required'])
+        self.assertEqual(row['boundary_evidence']['output']['unpaired_ports'], 1)
+
+    def test_query_rejects_truncated_cache_even_with_valid_json_lines(self):
+        for side in ('left', 'right'):
+            for rank in (0, 7):
+                self.write_rank(side, rank)
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        path = self.root/'out/alignment.jsonl'
+        first = path.read_text(encoding='utf-8').splitlines()[0]
+        path.write_text(first+'\n', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'incomplete or inconsistent'):
+            m.query_scan(self.root/'out', rank='0')
 
     def test_scan_reads_nonzero_rank_and_keeps_unmatched_rank(self):
         for side in ('left', 'right'):

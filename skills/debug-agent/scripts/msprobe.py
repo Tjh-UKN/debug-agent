@@ -4,6 +4,7 @@ Standard library only. Archives are read in place; inputs are never extracted or
 """
 import argparse
 from collections import defaultdict
+from fnmatch import fnmatchcase
 import hashlib
 import json
 import math
@@ -365,6 +366,96 @@ def reference(dump, record):
                                        "is_recompute": record["is_recompute"], "stack_api": record["stack_api"]}
 
 
+def boundary_evidence(a, b, comparison):
+    """Compact recorded input/output evidence, with no accuracy verdict."""
+    groups = {name: {"paired_ports": 0, "incomparable_ports": 0, "unpaired_ports": 0,
+                     "statistics": {k: 0 for k in ("equal", "different", "unavailable", "nonfinite")},
+                     "largest_norm_absolute": None, "largest_norm_relative": None}
+              for name in ("input", "output")}
+    ports = [{t["path"]: t for t in r["tensors"]} for r in (a, b)]
+    for path in ports[0].keys() | ports[1].keys():
+        group = groups["output" if path == "/output" or path.startswith("/output/") else "input"]
+        x, y = ports[0].get(path), ports[1].get(path)
+        if x is None or y is None:
+            group["unpaired_ports"] += 1
+            continue
+        if x["shape"] != y["shape"] or x["distribution"] != y["distribution"]:
+            group["incomparable_ports"] += 1
+            continue
+        group["paired_ports"] += 1
+        for metric in STATS:
+            delta = difference(x["statistics"].get(metric), y["statistics"].get(metric))
+            group["statistics"][delta["status"] if delta else "equal"] += 1
+    metadata = []
+    for delta in comparison["changes"]:
+        path = delta["path"]
+        if path.endswith("/Norm") and "absolute_difference" in delta:
+            group = groups["output" if path.startswith("/output/") else "input"]
+            for name, score in (("largest_norm_absolute", "absolute_difference"),
+                                ("largest_norm_relative", "relative_to_right")):
+                if delta.get(score) is not None and (group[name] is None or delta[score] > group[name][score]):
+                    group[name] = delta
+        elif path.rsplit("/", 1)[-1] not in STATS and delta["status"] in {"different", "nonfinite"}:
+            metadata.append(delta)
+    return {**groups, "metadata_change_count": len(metadata), "metadata_changes": metadata[:8],
+            "metadata_changes_truncated": len(metadata) > 8}
+
+
+def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offset=0):
+    """Page cached evidence per rank without reopening original archives."""
+    if limit < 1 or offset < 0:
+        raise ValueError("limit must be positive and offset nonnegative")
+    folder = Path(folder).expanduser().resolve()
+    summary = read_object((folder / "summary.json").read_bytes())
+    expected_counts = {(r["step"], r["rank"]): sum(r["counts"].values()) for r in summary["ranks"]}
+    seen_counts = defaultdict(int)
+    groups = {}
+    for item in summary["ranks"]:
+        if rank is not None and item["rank"] != rank or step is not None and item["step"] != step:
+            continue
+        groups[(item["step"], item["rank"])] = {
+            "step": item["step"], "rank": item["rank"], "match_count": 0, "status_counts": {},
+            "rows": [], "matched_rows_without_boundary_evidence": 0,
+            "sources": {side: item.get(side) for side in ("left", "right")}}
+    if not groups:
+        raise ValueError("requested step/rank is not present in the scan summary")
+    total_rows = 0
+    with (folder / "alignment.jsonl").open(encoding="utf-8") as stream:
+        for line_number, line in enumerate(stream, 1):
+            row = json.loads(line)
+            total_rows += 1
+            seen_counts[(row["step"], row["rank"])] += 1
+            group = groups.get((row["step"], row["rank"]))
+            if group is None:
+                continue
+            refs = [row[side] for side in ("left", "right") if row.get(side)]
+            def selected(ref):
+                observed_phase = "recompute" if ref["direction"] == "forward" and ref.get("is_recompute") else ref["direction"]
+                return fnmatchcase(ref["api"], api) and (phase is None or observed_phase == phase)
+            if not any(selected(ref) for ref in refs):
+                continue
+            index = group["match_count"]
+            group["match_count"] += 1
+            state = row["status"]
+            group["status_counts"][state] = group["status_counts"].get(state, 0) + 1
+            group["matched_rows_without_boundary_evidence"] += int(state == "matched" and "boundary_evidence" not in row)
+            if offset <= index < offset + limit:
+                group["rows"].append({**row, "alignment_line": line_number})
+    if any(seen_counts.get(key, 0) != expected_counts.get(key, 0) for key in seen_counts.keys() | expected_counts.keys()):
+        raise ValueError("alignment row counts disagree with summary; incomplete or inconsistent scan snapshot")
+    for group in groups.values():
+        group["next_offset"] = offset + len(group["rows"]) if offset + len(group["rows"]) < group["match_count"] else None
+    return {"scan": str(folder), "filters": {"api": api, "rank": rank, "step": step, "phase": phase},
+            "pagination": {"limit_per_rank": limit, "offset_per_rank": offset},
+            "alignment_rows_read": total_rows, "ranks": list(groups.values()),
+            "scan_coverage": {k: summary.get(k) for k in
+                ("coverage_complete", "errors", "missing_rank_pairs", "missing_mesh_ranks", "unscoped_sources")},
+            "meaning": "Cached statistics, not tensor equality or causality. Input slots may include weights or pre-write buffers. "
+                       "Rows follow the scan's left order, with unmatched right rows appended; not data-flow edges. "
+                       "Zero matches does not prove non-execution. Older scans lack boundary_evidence: use compare/inspect. "
+                       "Original source freshness is not checked; retain the scan's source hashes as the checkpoint."}
+
+
 def scan(left, right, output, left_root=None, right_root=None):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
@@ -422,6 +513,7 @@ def scan(left, right, output, left_root=None, right_root=None):
                 if state == "matched":
                     result = compare_records(pair["left"], pair["right"])
                     row.update(basis=pair["basis"], occurrence=pair["occurrence"], repeat_count=pair["repeat_count"],
+                               boundary_evidence=boundary_evidence(pair["left"], pair["right"], result),
                                compared_statistic_fields=result["compared_statistic_fields"],
                                changed_fields=sum(c["status"] != "unavailable" for c in result["changes"]),
                                unavailable_fields=sum(c["status"] == "unavailable" for c in result["changes"]),
@@ -480,6 +572,14 @@ def main():
     show.add_argument("--rank", required=True)
     show.add_argument("--step")
     show.add_argument("--api", required=True)
+    query = commands.add_parser("query", help="query an existing scan; no source archive access")
+    query.add_argument("--scan", required=True)
+    query.add_argument("--api", default="*", help="glob against either side's API name; quote wildcards")
+    query.add_argument("--rank", help="all scanned ranks by default")
+    query.add_argument("--step", help="all scanned steps by default")
+    query.add_argument("--phase", choices=("forward", "backward", "recompute"))
+    query.add_argument("--limit", type=int, default=3, help="records per rank per page")
+    query.add_argument("--offset", type=int, default=0, help="matching records to skip per rank")
     for command in ("scan", "compare"):
         child = commands.add_parser(command)
         child.add_argument("--left", required=True)
@@ -494,7 +594,9 @@ def main():
             child.add_argument("--api", required=True, help="API name on the left; counterpart resolved by stack+shape+order")
     args = parser.parse_args()
     try:
-        if args.command == "inspect":
+        if args.command == "query":
+            result = query_scan(args.scan, args.api, args.rank, args.step, args.phase, args.limit, args.offset)
+        elif args.command == "inspect":
             with Source(args.data) as source:
                 result = source.load(select_scope(source, args.rank, args.step)).inspect(args.api)
         else:

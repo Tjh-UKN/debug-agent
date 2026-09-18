@@ -23,6 +23,7 @@ python <skill-dir>/scripts/msprobe.py scan --left <npu-data> --right <gpu-data> 
 - `alignment.jsonl`：完整对应表及未对齐项（含单边缺卡时已有端的全部记录），带两端 API 名、各自执行序位置、方向/重计算标记和源文件路径。表以左端次序为主、追加右端未匹配项，不是联合执行轨迹；原始位置始终以各自 `position` 为准。summary 的 `alignment_line` 是该文件的一基行号。
 - `coverage_complete` 只表示已提供并可识别的 step/rank 对齐覆盖、且已观测 DTensor mesh 没有缺卡，不等于所有 API 已匹配，也不证明输入包之外没有其他运行材料。必须同时阅读 errors、missing_rank_pairs、missing_mesh_ranks、unscoped_sources 及每卡的未匹配数。
 - 不把小差异自动归为噪声；默认不丢弃任何有限数值差异。记录顺序上的首个差异不是已经证明的因果起点。
+- 新扫描的 matched 行带 `boundary_evidence`：分开统计 input/output 记录中的相等、不同、缺失、非有限字段，保留各组绝对/相对 Norm 差异较大项和元数据变化。这是摘要导航，不给算子判定正常/异常；输入槽也可能是权重或执行前目的缓冲。
 - Norm 差异分别按前向、反向和重计算标记展示绝对/相对较大项，避免前向量级掩盖反向异常。`comparison` 同时列出实际比较统计数、缺失统计数与需要核查端口的记录数；只匹配到 shape 但无统计，不算完成精度比较。大包可使用已有解包目录减少压缩包随机读取开销。
 
 对选定卡与调用深入比较（`--api` 使用左端 API 名，右端由对应表规则解析）：
@@ -39,6 +40,19 @@ python <skill-dir>/scripts/msprobe.py inspect --data <one-side-data> --rank <ran
 backward 没有独立栈时，工具使用本端同名 forward（仅替换末尾方向）的显式栈作为调用点，并在 `stack_api` 标出来源；跨端仍按栈、forward shape、backward 首个梯度输入槽 shape、方向及执行序匹配，不按两端编号直接配对。端口布局不同时 `role_check_required=true`；共有字段的统计可以查看，但在核实端口语义前不能把输出槽命名为 dQ/dK/dW 来作因果推断。
 
 dtype、mask 类型/值、scale 等配置差异是诊断线索，不作为相同 shape 调用的剔除条件。DTensor 的记录 shape/统计是本地视图，工具保留 mesh/placement，不擅自乘卡数、乘 √卡数或自动推算“全局参数”。不兼容的分片/视图不直接比较数值。工具比较统计摘要，不加载原始张量；摘要相等不证明逐元素相等，非有限值与缺失统计单独标记。
+
+## 复用扫描按问题查询
+
+已有可信扫描时直接复用，不为每个子任务重新解包或遍历原包。下面在所有已扫描 step/rank 中查询一类调用；API 通配符应加引号，任一端名字符合即可返回：
+
+```sh
+python <skill-dir>/scripts/msprobe.py query --scan <scan-dir> --api '*linear*' --phase backward --limit 3
+```
+
+- `--phase forward/backward/recompute` 区分普通前向、反向和前向重计算；省略表示全部阶段。可用 `--step`、`--rank` 缩小范围，默认保留所有卡，包括符合条件记录为零的卡。
+- `--limit` 与 `--offset` **按每张卡的每个 step 分页**，结果保留总命中数、各对应状态计数与 `next_offset`。不会因 rank0 占满页面就漏掉后续卡；没有命中不等于该卡没有执行。
+- 每行带 `alignment_line`、两端原始位置/来源、对齐依据与 `role_check_required`；缺卡、未匹配和旧扫描缺少输入输出证据的情况保留。元数据变化最多展示 8 条，并给出总数及截断标志；完整字段用 compare/inspect。
+- query 只读 summary/alignment 文件，不重开原包，不检查原包是否已更新。结果引用扫描时的 source hashes；它是存档证据，不是当前文件的实时状态。旧扫描仍可查位置，但 `matched_rows_without_boundary_evidence` 非零时不能把缺少证据当成没有差异，针对需要的调用用 compare/inspect 即可。
 
 ## 如何从对齐结果推进诊断
 

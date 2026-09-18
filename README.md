@@ -4,6 +4,8 @@
 
 主线是 **分析 → 设计下一步 → 执行核查 → 更新判断 → 继续或闭环**。主 agent 负责诊断取舍，subagent 执行具体核查，task 保存长任务进展；展示与记账服务于这条主线。能力是否达到预期，由真实精度案例中的假设、实验和关键决策检验。
 
+领域助力包括 [训练定位入口](skills/debug-agent/references/training.md) 和 [msprobe 取证工具](skills/debug-agent/references/msprobe.md)：按现象选择需要查看的时间段与证据，复用全卡扫描查询相关调用的输入/输出差异。工具提供可追溯证据，不自动认定根因。
+
 交互形式参考 [PUA](https://github.com/tanweai/pua)：可安装的 Skill/插件、命令入口、启动卡、进度卡、证据卡与简短旁白。内容保持专业诊断风格，不使用施压措辞或自评绩效分数。
 
 ```text

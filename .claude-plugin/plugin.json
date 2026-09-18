@@ -1,6 +1,6 @@
 {
   "name": "debug-agent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Evidence-driven precision diagnosis with persistent tasks, experiment reduction and professional status cards.",
   "author": {"name": "Tjh-UKN", "url": "https://github.com/tjh-ukn"},
   "repository": "https://github.com/tjh-ukn/debug-agent",
