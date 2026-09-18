@@ -1,156 +1,150 @@
 # Debug Agent
 
-假设驱动的 AI 精度诊断 Agent。以现象、事实和代码为依据，选择能区分假设的核查，按需缩减实验，并通过证据链或针对性修复验证完成闭环。
+面向 AI 训练与推理精度问题的 Skill：为模型提供 **msprobe 取证工具、领域数据契约和可接续的诊断上下文**。
 
-围绕整体问题划分已知、未知与子问题边界，选择当前最关键的问题，用核查结果缩小候选范围。主 agent 维护整体判断，subagent 回答有边界的节点，task 保存长任务进展；具体路径由模型选择，效果由真实案例检验。
+适用于 NaN/Inf、梯度范数异常、跨 CPU/GPU/NPU 结果不一致，以及高成本复现场景缩减。围绕整体问题明确已知、未知与子问题边界，选择当前最关键的问题，用证据缩小候选范围。具体推理和核查路径由模型选择。
 
-领域资料包括 [训练材料索引](skills/debug-agent/references/training.md) 和 [msprobe 取证工具](skills/debug-agent/references/msprobe.md)：查阅相关材料窗口，复用全卡扫描查询调用的输入/输出差异。工具提供可追溯证据，不自动认定根因。
+## 使用入口与自动触发
 
-交互形式参考 [PUA](https://github.com/tanweai/pua)：可安装的 Skill/插件、命令入口、启动卡、进度卡、证据卡与简短旁白。内容保持专业诊断风格，不使用施压措辞或自评绩效分数。
+安装后，在原来的 Pi、Codex 或 Claude Code 对话中使用，无需独立界面。
+
+| 宿主 | 显式调用 | 自动加载方式 |
+|---|---|---|
+| Pi | `/skill:debug-agent <问题描述>` | 正常启用 Skill 发现时，模型根据描述选择读取技能 |
+| Codex | `$debug-agent <问题描述>` | 已允许隐式调用，由模型根据任务内容选择 |
+| Claude Code | `/debug-agent:debug <问题描述>` | 插件 Skill 可供选择；另有可选的会话启动提醒 |
+
+例如，在 Pi 中输入：
 
 ```text
-DEBUG AGENT · 诊断进度
-已知任务 █████░░░░░ 1/2（非定位完成度）
-┌──────┬────────────────────┬────────────┐
-│ 任务 │ 核查问题           │ 状态       │
-├──────┼────────────────────┼────────────┤
-│ T1   │ 缩减后是否仍复现   │ 已验收     │
-│ T2   │ 修复点是否有效     │ 运行中     │
-└──────┴────────────────────┴────────────┘
-▎ 小场景已保留原问题表现，下一步在该场景验证修复。
+/skill:debug-agent 对比 ./left.tgz 和 ./right.tgz，分析两端 grad norm 不一致的原因。只分析已有数据，不做实验。
 ```
 
-上面是 UI 示例，不是一次真实实验。
+也可以直接描述精度问题，让模型自行选择技能。**自动选择可能漏触发，需要确定加载时使用显式入口。** 宿主通常先提供技能名称和描述，模型选中后读取核心规则，再按需读取参考资料。
 
-## 安装
+当前没有监听界面、命中关键词就强制注入的组件，也不保证固定显示“检测到问题，已自动注入”。已有完整加载测试不等于自然对话中的自动触发可靠性已经通过验收。
 
-需要 Python 3.10+，示例使用 `python` 命令；Linux/WSL 只有 `python3` 时使用该命令。无第三方运行依赖。仓库为私有时，需要拥有访问权限。
+## 对话中会看到什么
 
-### Codex
+展示采用与 [PUA](https://github.com/tanweai/pua) 相近的文本卡片和简短旁白，保持专业诊断风格。在开始、重要证据变化和交付时说明当前判断，不为每次工具调用重复展示卡片。
+
+以下只是输出形式示意，内容随实际问题变化：
+
+```text
+DEBUG AGENT · 诊断启动
+┌──────────┬────────────────────────────────┐
+│ 整体问题 │ 两端梯度范数不一致             │
+│ 已知     │ 已有两端同一步的 dump          │
+│ 关键未知 │ 差异在哪个计算边界出现         │
+│ 下一步   │ 核对全卡对应调用的输入与输出   │
+└──────────┴────────────────────────────────┘
+```
+
+长任务可显示节点进度、证据和恢复信息。任务完成比例只表示执行进度，不代表根因定位完成度。最终区分根因确认、修复验证、范围已缩小与受阻待续。
+
+## 安装与更新
+
+需要 Python 3.10+；仓库脚本仅依赖标准库。Linux/WSL 通常使用 `python3`，Windows 可使用 `python`。在**实际运行宿主的环境**中安装：Pi 或 Claude Code 在 WSL 运行时，就在 WSL 安装。
+
+### Codex / Pi：安装本地 Skill
+
+先取得仓库：
 
 ```sh
 git clone https://github.com/tjh-ukn/debug-agent.git
 cd debug-agent
-python scripts/install.py codex
 ```
 
-安装到 `$CODEX_HOME/skills/debug-agent`，未设置时为 `~/.codex/skills/debug-agent`。已有不同版本时使用 `--update`，旧文件会先备份；更新遇到文件写入异常会回滚已写入文件，回滚本身失败时报告备份位置。新会话中可显式调用 `$debug-agent`；Skill description 允许宿主自动选择，具体是否命中由宿主判断。
-
-### Pi（含 WSL）
-
-在 Pi 所在环境的仓库目录执行：
+按所用宿主选择一个安装命令：
 
 ```sh
-python3 scripts/install.py pi --update
+# Codex
+python scripts/install.py codex
+
+# Pi（在 Pi 所在环境执行）
+python3 scripts/install.py pi
 ```
 
-安装到 `~/.pi/agent/skills/debug-agent`，更新前备份已有文件，不改变模型配置。Pi 的 subagent 能力由宿主扩展提供，安装 Skill 本身不会创建调度器。
+| 宿主 | 本项目安装器的目标目录 |
+|---|---|
+| Codex | `$CODEX_HOME/skills/debug-agent`；未设置时为 `~/.codex/skills/debug-agent` |
+| Pi | `~/.pi/agent/skills/debug-agent` |
 
-### Claude Code
+更新时先拉取仓库，再给对应安装命令加 `--update`。安装器备份已有差异文件，不修改模型配置；写入失败会尝试回滚并报告备份位置。若宿主未显示新技能或更新，重新启动宿主后检查显式入口。
+
+Pi 的 subagent 能力由宿主扩展提供；安装本 Skill 不会自动安装该扩展。没有可用 subagent 工具时，可由主 agent 执行核查。
+
+### Claude Code：安装插件
 
 ```sh
 claude plugin marketplace add tjh-ukn/debug-agent
 claude plugin install debug-agent@debug-agent-marketplace
 ```
 
-使用 `/debug-agent:debug`。需要与 PUA 裸命令相同的简短入口时，在保留的本地克隆目录执行：
+安装后使用 `/debug-agent:debug`。若需要简短的 `/debug-agent` 别名，在保留的本地克隆目录执行 `python scripts/install.py claude-alias`；别名指向该克隆，移动目录后需重新安装，且应与插件保持同一版本。别名本身不安装插件或 hook。
 
-```sh
-python scripts/install.py claude-alias
-```
+**可选启动提醒**：在 Claude Code 对话中执行 `/debug-agent:debug on`，关闭用 `/debug-agent:debug off`。提醒默认关闭；启用后，在会话启动、恢复或压缩后提供技能入口和当前项目账本候选。这是入口提醒，不会自动加载全部资料、启动实验或后台运行任务。
 
-随后可用 `/debug-agent`。别名指向本地克隆中的核心 Skill，移动目录后需要重新安装。插件与别名应保持同一版本。安装别名本身不会安装插件或会话 hook。
+本项目尚未为 Codex/Pi 实现对应的会话注入 hook；`on/off` 不能在这些宿主中开启强制注入。详细边界见 [接入说明](skills/debug-agent/references/integration.md)。
 
-## 命令
+## 常用参数
 
-下表以 Claude Code 裸别名为例；不安装别名时使用 `/debug-agent:debug`，Codex 使用 `$debug-agent`，后面的参数相同。
+以下参数接在所用宿主的入口之后，例如 `/skill:debug-agent resume`、`$debug-agent evidence`、`/debug-agent:debug status`。
 
-| 命令 | 行为 |
+| 参数 | 用途 |
 |---|---|
-| `/debug-agent <问题描述>` | 启动诊断，按证据选择下一步 |
-| `/debug-agent status` | 只读显示任务、假设、场景及下一步 |
-| `/debug-agent evidence` | 显示证据、来源、有效性和范围 |
-| `/debug-agent again` | 重新选择有区分度的核查 |
-| `/debug-agent done-check` | 对照目标检查结论及证据 |
-| `/debug-agent resume` | 核实运行状态后恢复，避免重复提交实验 |
-| `/debug-agent on` | 开启已安装 Claude Code hook 的会话启动提醒 |
-| `/debug-agent off` | 关闭该启动提醒，不取消实验或禁用显式调用 |
-| `/debug-agent help` | 显示可用命令 |
+| 问题描述 | 分析并推进当前问题 |
+| `status` | 查看任务、假设、场景与下一步 |
+| `evidence` | 查看证据来源、范围与有效性 |
+| `again` | 重新选择有区分度的核查 |
+| `done-check` | 对照原始目标与证据检查是否完成 |
+| `resume` | 恢复已有案例，核实作业和产物后继续 |
+| `help` | 查看入口和支持的命令 |
 
-Claude Code 插件的 `SessionStart` hook 默认关闭，通过 `on` 开启后，在启动、恢复和压缩后提供诊断接入与账本位置提示。hook 只读本地数据，不联网、不启动实验、不阻塞结束。启动脚本优先使用 `python3`，其次 `python`，通过宿主的 Bash 执行。配置默认为 `~/.debug-agent/config.json`，隔离验证可用 `DEBUG_AGENT_CONFIG` 指定其他文件。
+`status/evidence` 只读查看，`resume` 接续已有案例。`on/off` 仅用于上面的 Claude Code 启动提醒，不是后台任务开关。
 
-Codex 当前通过 Skill 自动选择接入，未实现同等的 SessionStart 注入；`on/off` 在其中只能保存偏好。自动选择、会话提醒、持久化恢复和后台持续运行是不同能力，本包没有后台调度器。
+## 提供哪些能力
 
-## 诊断约定
+| 能力 | 当前实现与边界 |
+|---|---|
+| msprobe 取证 | 按原始执行序读取，按显式 API 列表关联栈，按栈与 shape 对应两端调用，覆盖全部提供的卡；保留未匹配、缺卡和端口差异 |
+| 问题与证据接续 | 保存已知、未知、当前问题边界、证据来源和下一步；可复用存档，证据更正会影响关联判断 |
+| 任务协作 | 主 agent 维护整体问题，subagent 回答有边界的节点；实际委派由宿主执行，短核查无需建立任务树 |
+| 领域参考 | 提供训练异常对应的材料窗口与数值证据范围，按需查阅；不要求完成固定排查清单 |
+| 实验与缩减 | 由模型结合资源和证据设计；无实验条件可纯分析，保留原表现的小场景可以闭环 |
 
-- 假设有事实或代码依据，记录可核查预测；允许多个原因并存、回溯和重新打开。
-- 下一步考虑区分能力、成本与结果可信度，不规定固定排查顺序。
-- 频繁昂贵实验时考虑缩减，保留原问题表现即可；小场景可闭环，大场景验证不是完成前提。
-- 优先利用代码和已有现象，针对实际证据缺口补采中间数据。
-- 任务完成、假设成立和修复成功分别记录；无效、未决与反证不得混淆。
-- 主 agent 维护整体判断，subagent 执行有边界的任务。短小核查无需为框架制造任务。
-- 关键观察带适用范围；未检查的材料不能写成未提供。统计相同不等于张量相同，未记录不等于未执行。
-- 派工保留原始问题与材料目录，允许子 agent 推翻前提；共享前提的报告不算独立印证。
-- 排除重要假设和成功闭环前审查范围、因果条件与关键反例；证据更正后撤回依赖判断。
+工具不会自动证明根因。根因定位可通过严谨证据链或针对性修复验证完成；只解释了局部过程、仍有关键起因未决时，应报告范围已缩小。
 
-### msprobe 数据分析
+## 直接使用 msprobe 工具
 
-内置数据契约：dump 原始顺序就是执行序；stack 按显式 API 名关联；跨端按调用栈和 shape 对应；完整定位覆盖所有卡。使用标准库工具读取 tar/tgz/zip 或解包目录，不解包/修改原包：
+通常由 agent 按需调用，也可以手动执行。以下命令在仓库目录运行，请替换输入路径、rank 和 API 名；多步数据的 compare/inspect 还需指定 `--step`。`scan` 的输出目录必须是新目录，已有可信扫描可以直接查询。
 
 ```sh
-python skills/debug-agent/scripts/msprobe.py scan --left <一端材料> --right <另一端材料> --out <新输出目录>
-python skills/debug-agent/scripts/msprobe.py compare --left <一端材料> --right <另一端材料> --rank <卡号> --api <左端API名>
-python skills/debug-agent/scripts/msprobe.py inspect --data <单端材料> --rank <卡号> --api <API名>
+python skills/debug-agent/scripts/msprobe.py scan --left ./left.tgz --right ./right.tgz --out ./scan
+python skills/debug-agent/scripts/msprobe.py query --scan ./scan --api '*linear*' --phase backward --limit 3
+python skills/debug-agent/scripts/msprobe.py compare --left ./left.tgz --right ./right.tgz --rank 0 --api Functional.linear.0.forward
+python skills/debug-agent/scripts/msprobe.py inspect --data ./left.tgz --rank 0 --api Functional.linear.0.forward
 ```
 
-全卡概览与完整对应表分别写入 `summary.json`、`alignment.jsonl`。未匹配、重复调用歧义、缺卡、读取错误和端口差异均保留；dtype/mask 差异作为线索，不因不同被过滤。摘要相等不等于张量相等，执行序上的首个差异不等于根因。适用范围与匹配规则见 [msprobe 数据契约](skills/debug-agent/references/msprobe.md)。
+支持 tar/tgz/zip、解包目录或单个 dump.json；只读原始材料。扫描生成 `summary.json` 和 `alignment.jsonl`。`query` 只读缓存，默认覆盖所有已扫描卡，`--limit` 按每个 step/rank 分页；缓存代表扫描时的快照，不自动确认原包是否更新。
 
-## 长任务与交接
+统计摘要相同不证明逐元素相同，执行序相邻不证明数据依赖。完整参数和解释范围见 [msprobe 数据契约](skills/debug-agent/references/msprobe.md)。
 
-长任务状态存项目 `.debug-agent/<case-id>/state.json`，包含假设、证据引用、复现场景、任务、checkpoint 与历史。Python 工具提供并发锁、原子提交和版本冲突检查；它们不判断证据真实性，也不执行模型调用。
+## 长任务与恢复
 
-材料目录与派工上下文可直接生成：
+状态保存在项目 `.debug-agent/<case-id>/state.json`，包含问题、假设、证据、场景、任务、checkpoint 和历史。恢复会提示待验收结果、失效证据及基线变化，避免重复已完成工作。
 
-```sh
-python skills/debug-agent/scripts/materials.py <用户提供的目录或压缩包> [<其他材料> ...]
-python skills/debug-agent/scripts/case.py --case .debug-agent/<case-id> handoff --task T1
-```
+`running` 是保存时的状态，恢复后仍需核实真实作业。项目不提供后台调度器、设备权限或断网后自动重启进程；任务和存档不等于持续执行服务。交接、状态转换与恢复工具见 [任务协议](skills/debug-agent/references/tasks.md)。
 
-`handoff` 从初始化的 `materials` 路径读取目录，附上原始问题、带范围的观察与待核查假设；不会启动 agent。目录与压缩包成员可用不等于已检查。更正证据用 `supersedes`，工具保留历史并撤回依赖结论、恢复待验收状态；详细字段和局部闭环示例见 [任务协议](skills/debug-agent/references/tasks.md)。这是可检查的约束，不是因果正确性证明。
+## 验证与项目资料
 
-新子任务使用 `case.py --case <case-dir> prepare-task --file <task.json>`，一次创建 pending 节点并返回交接上下文；之后才由宿主实际派工，reviewer 也遵循此入口。主 agent 仲裁原始证据与读取方法，不能把 reviewer 的结论自动当事实。`narrowed` 的报告应明确根因尚未确认。
+脚本检查覆盖读取与对应、缓存查询、状态、安装及接入。**这些检查不等于已证明根因定位更快或更准确**；自然触发、长程诊断和不同模型的收益需要分别验证。
 
-恢复工具提供只读快照，不要求创建锁文件，不变更任务状态：
+- [核心 Skill](skills/debug-agent/SKILL.md)：问题组织方式与完成标准。
+- [训练资料索引](skills/debug-agent/references/training.md)：材料窗口和官方参考。
+- [数值证据范围](skills/debug-agent/references/precision.md)：比较对象与采集语义。
+- [展示协议](skills/debug-agent/references/display.md)：启动、进度、证据与交付卡片。
+- [评估约定](skills/debug-agent/references/evaluation.md)：同模型对照、已知案例回归和未见案例验证。
+- [验证记录](docs/validation.md)：检查命令、实际结果及未通过或未验证的边界。
 
-```sh
-python skills/debug-agent/scripts/recovery.py list --project .
-python skills/debug-agent/scripts/recovery.py resume --case .debug-agent/<case-id>
-```
-
-从项目子目录也能找到最近的账本，遇到 Git 边界停止。活跃、已关闭和无法读取的案例分别列出；多个活跃案例不会自动猜选。恢复摘要保留运行中的 host/job_id/命令/产物和待验收结果，并提示 checkpoint 过期、基线失效等情况。`running` 始终只是保存时的状态，不能代替实时作业核查。
-
-## 验证与维护
-
-```sh
-python -B skills/debug-agent/scripts/test_case.py
-python -B skills/debug-agent/scripts/test_mechanisms.py
-python -B skills/debug-agent/scripts/test_msprobe.py
-python -B scripts/test_integration.py
-```
-
-验证覆盖账本可靠性、命令偏好、会话提醒、基于真实状态的面板和隔离安装。已有独立 agent 在合成 CPU 精度案例中完成定位与修复闭环；它不证明真实硬件诊断效果。真实问题集应同时评价最终结论和关键决策节点，见 [评估约定](skills/debug-agent/references/evaluation.md)。
-
-账本与接入测试已在 Windows/Python 3.13 和 WSL Ubuntu/Python 3 运行。真实 Claude Code 客户端已验证插件/命令发现、SessionStart 提醒与只读账本访问；完整恢复脚本路径的验证结果见 [验证记录](docs/validation.md)。Codex 桌面自带 CLI 的独立会话测试无输出超时，未记为客户端验证通过。插件格式及 hook 协议依据 [Claude Code 插件文档](https://code.claude.com/docs/en/plugins) 与 [Hooks 文档](https://code.claude.com/docs/en/hooks)。
-
-## 目录
-
-```text
-.claude-plugin/      Claude Code 插件及 marketplace
-.codex-plugin/       Codex 插件描述
-commands/           Claude Code 命令入口
-hooks/              可选会话启动提醒
-skills/debug-agent/ 核心规则、按需资料与状态/展示工具
-scripts/            安装与接入测试
-```
-
-私有任务、实验日志、设备数据、凭据和本机验证产物不属于发布内容。各宿主权限与用户授权始终优先，Skill 不扩展权限。
+私有案例、设备数据、凭据和本机分析产物不属于发布内容。Skill 沿用宿主权限与用户授权。
