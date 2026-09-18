@@ -2,9 +2,9 @@
 
 假设驱动的 AI 精度诊断 Agent。以现象、事实和代码为依据，选择能区分假设的核查，按需缩减实验，并通过证据链或针对性修复验证完成闭环。
 
-主线是 **分析 → 设计下一步 → 执行核查 → 更新判断 → 继续或闭环**。主 agent 负责诊断取舍，subagent 执行具体核查，task 保存长任务进展；展示与记账服务于这条主线。能力是否达到预期，由真实精度案例中的假设、实验和关键决策检验。
+围绕整体问题划分已知、未知与子问题边界，选择当前最关键的问题，用核查结果缩小候选范围。主 agent 维护整体判断，subagent 回答有边界的节点，task 保存长任务进展；具体路径由模型选择，效果由真实案例检验。
 
-领域助力包括 [训练定位入口](skills/debug-agent/references/training.md) 和 [msprobe 取证工具](skills/debug-agent/references/msprobe.md)：按现象选择需要查看的时间段与证据，复用全卡扫描查询相关调用的输入/输出差异。工具提供可追溯证据，不自动认定根因。
+领域资料包括 [训练材料索引](skills/debug-agent/references/training.md) 和 [msprobe 取证工具](skills/debug-agent/references/msprobe.md)：查阅相关材料窗口，复用全卡扫描查询调用的输入/输出差异。工具提供可追溯证据，不自动认定根因。
 
 交互形式参考 [PUA](https://github.com/tanweai/pua)：可安装的 Skill/插件、命令入口、启动卡、进度卡、证据卡与简短旁白。内容保持专业诊断风格，不使用施压措辞或自评绩效分数。
 
