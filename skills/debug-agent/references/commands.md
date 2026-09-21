@@ -15,7 +15,7 @@ Codex 使用 `$debug-agent <参数>`。Claude Code 插件使用 `/debug-agent:de
 | on / off | 执行 `scripts/control.py on` 或 `off`，保存会话启动提醒偏好；不改变运行任务或用户授权 |
 | help / 帮助 | 展示此表的简短版与当前宿主实际入口 |
 
-持久状态面板：`python <skill-dir>/scripts/panel.py --case <case-dir> --view start|status|evidence|done`。只有对已有账本展示时使用，不为绘制 UI 创建账本。短任务直接按展示协议自然语言输出。
+持久状态面板：`python <skill-dir>/scripts/panel.py --case <case-dir> --view start|status|evidence|done`。只有对已有账本展示时使用，不为绘制 UI 创建账本。调查追踪用只读 `python <skill-dir>/scripts/trace.py --case <case-dir> tree|path|why|impact|frontier`，返回 JSON：path 解释为什么调查到这里，why 解释结论凭什么成立，impact 显示证据或假设失效的显式影响范围；只读查询，不创建任务或修改状态。短任务直接按展示协议自然语言输出。
 
 `status/evidence/done-check/resume` 的用户输出使用 [展示协议](display.md)，只读查询也保留卡片形式。`resume` 在进度卡外列出恢复警告和运行记录的核实边界，不将历史状态当作实时事实。
 

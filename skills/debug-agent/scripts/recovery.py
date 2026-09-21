@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 from case import execute, inactive_evidence, read_json
+import investigation
 
 
 def discover(start):
@@ -36,6 +37,38 @@ def discover(start):
     for status in ("active", "closed"):
         result[status].sort(key=lambda entry: str(entry["updated_at"]), reverse=True)
     return result
+
+
+def investigation_snapshot(state):
+    """Where the search stands: focus paths, frontier, pruned and stale branches.
+
+    Recovers the investigation state, not just the execution queue. Read-only:
+    branch health is derived and never written back; legacy cases without
+    registered lineages show only what exists and never get paths guessed.
+    """
+    hypotheses = state.get("hypothesis", {})
+    health = {hid: investigation.branch_health(state, hid) for hid in hypotheses}
+    focus = [hid for hid in (state.get("checkpoint", {}).get("current") or {}).get("focus_hypotheses") or []
+             if hid in hypotheses]
+    frontier = investigation.active_frontier(state)
+    pruned = sorted(hid for hid, item in health.items() if item["state"] == "pruned")
+    stale = sorted(hid for hid, item in health.items() if item["state"] == "stale")
+    dangling = sorted(hid for hid, node in hypotheses.items()
+                      if node.get("investigates") and node["investigates"] not in hypotheses)
+    targets = focus or [node["id"] for node in frontier]
+    paths, broken = [], []
+    for hid in targets:
+        try:
+            paths.append(investigation.investigation_path(state, hid))
+        except ValueError:
+            broken.append(hid)
+    return {"focus": focus,
+            "frontier": frontier,
+            "pruned": pruned,
+            "stale": stale,
+            "current_paths": paths,
+            "unregistered_lineage": sorted(set(broken) | set(dangling)),
+            "note": "paths come from registered investigates edges only; missing lineages are listed, never inferred"}
 
 
 def snapshot(state):
@@ -74,6 +107,7 @@ def snapshot(state):
             "closure": state.get("closure"), "checkpoint": checkpoint, "baseline": baseline,
             "tasks": pending, "hypotheses": state.get("hypothesis", {}),
             "evidence": state.get("evidence", {}), "inactive_evidence": inactive, "warnings": warnings,
+            "investigation": investigation_snapshot(state),
             "job_execution": "none; read-only snapshot"}
 
 

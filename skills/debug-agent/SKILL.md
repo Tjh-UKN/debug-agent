@@ -23,6 +23,10 @@ description: Diagnose AI training or inference accuracy problems, numerical dive
 
 下一步的价值按缩小重要未知的程度、结果可判别性和代价衡量。优先使用已有代码、数据和实验现象；仅在关键缺口需要时补采证据。每次结果回到整体问题：已回答什么、范围如何变化、当前最重要的未知是什么。无判别力的结果不算问题已解决；前提被修正时更新已知及相关边界。
 
+## 调查与回溯
+
+一个判断 confirmed 只覆盖它自身，不等于满足案例目标。未达到 goal/acceptance 前继续问“它从哪里来”：新来源候选用 `investigates` 指向被调查的判断，并用 `investigation_question` 写明该分支要回答的局部问题。`investigates` 只记录调查来源（怎么查到这里），`parents` 只记录结论成立的必要前提（为什么相信它，AND 语义）；两者不互相推导。分支被排除只剪该子树，兄弟候选与父节点不受影响；逻辑前提失效仍沿 parents 走既有 correction 撤回。被排除的分支保留为历史，回溯到最近仍有有效候选的祖先继续，不重启案例。优先设计一次能区分多个候选的核查（一个 task 可关联多个 hypotheses），不为结构完整性机械制造任务。checkpoint 用 `focus_hypotheses` 保存当前前沿；[追踪命令](commands.md) 的 trace.py 以 tree/path/why/impact/frontier 只读回答定位路径、成立依据与影响范围，root_cause/evidence_chain 闭环须关联 confirmed 根因假设。
+
 ## 完成边界
 
 - 默认目标为根因定位。当前范围内，严谨证据链指向具体原因，或针对性修复验证解决问题，均可闭环；不强制同时采用两种方式。

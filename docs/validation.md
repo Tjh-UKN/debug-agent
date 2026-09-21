@@ -1,5 +1,17 @@
 # 机制、接入与长任务恢复验证
 
+## 0.7.0 调查树与回溯（2026-09-21）
+
+依据《Debug Agent Investigation Trace & Backtracking》设计文档与开发者实施指南，在不重构现有账本的前提下补齐两类关系的显式区分：`investigates` 记录“为什么会调查这个节点”（调查树），`parents` 只记录逻辑必要前提（AND 型依赖 DAG）。两者禁止互相推导，由脚本校验与投影分则保证。
+
+落地内容：`case.py` 新增 hypothesis 的 investigates/investigation_question 校验（存在性、非自指、lineage 无环、非空时问题必填）、checkpoint 的 focus_hypotheses 引用校验，以及新 close 约定——root_cause + evidence_chain 必须关联至少一个 confirmed 根因假设（narrowed/blocked/fix_verified 不强制，历史已关闭案例读取兼容）。`reconcile_correction` 未改动：撤回仍只沿 parents 与证据引用传播，调查子树是否当前有效由投影动态计算，不写回 state.json。
+
+新增纯投影模块 `investigation.py`（children/investigation_path/logical_dependencies/logical_dependents/branch_health/active_frontier/investigation_tree/why_trace/impact_trace）与只读 CLI `trace.py`（tree/path/why/impact/frontier，JSON 输出）。path 只沿 investigates，why 只沿 parents 与已登记证据，impact 只计算显式引用可达的影响范围；缺失关系如实标注，不猜测。`recovery.py` resume 返回 investigation 段（focus、当前定位路径、frontier、pruned、stale、未登记 lineage），恢复调查状态而不只是执行队列；`panel.py` 在状态卡增加紧凑的定位路径与来源候选分支，交付卡对 evidence_chain 闭环显示根因节点。文档同步：SKILL.md 新增“调查与回溯”，tasks.md 写明两类关系的正确用法与回溯规则，display/commands/README 补充展示与追踪入口。
+
+验证：Python 3.12（WSL）全部 85 项检查通过，包括原 65 项（13 账本 + 10 机制 + 22 msprobe + 20 接入）与新增 20 项调查测试，覆盖设计指南的 T1–T10 矩阵：lineage/环检测原子性/兄弟独立性/后代剪枝不落盘/两类关系分离传播/why-path 分则/闭环根因契约/legacy 可读/恢复投影，及三个合成行为场景（confirmed 位置不 closure、单候选排除不污染兄弟、逻辑前提失效沿 parents 撤回）。另以合成“高并发 aclgraph layer28 NaN”案例端到端冒烟：建树、排除 H10 仅剪该子树、trace path/impact、resume 恢复 focus/frontier/pruned、面板展示均符合设计第 13/15 节示例。
+
+旧测试中有两处 close fixture 按新契约更新（补 confirmed 根因假设与 hypotheses 字段）；这是 T8 明确要求的契约变化，非行为回归。边界：不回填历史 investigates，旧案例显示“未登记调查来源”；branch health 是派生投影，不写入 state；impact 只覆盖显式引用，自然语言中的隐藏前提仍需主 agent 补查；put 是完整记录替换，更新假设时需携带已有 lineage 字段。本轮未运行真实训练、未重跑真实长程诊断，不宣称模型定位能力已提升。
+
 ## 0.6.1 围绕问题边界精简（2026-09-18）
 
 按用户最新约定，核心仅保留整体问题、已知/未知、子问题边界与当前关键问题的组织方式，以及完成标准和工具入口。删除“三类关键判断”推理教学、重复的模型补偿提醒和场景排查步骤；数值参考缩为证据范围表，训练参考缩为材料索引，评估约定合并重复内容。问题概况复用现有 checkpoint.summary/next_action，不新增 schema、状态或必填表格。

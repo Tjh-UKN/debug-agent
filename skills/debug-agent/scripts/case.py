@@ -168,6 +168,20 @@ def acyclic(state, kind, item_id, parents):
                        [item["parent"]] if item.get("parent") else [])
 
 
+def investigation_acyclic(state, item_id, investigates):
+    """investigates is the search lineage (why this node was examined), never a
+    logical dependency; it must not cycle and must not be auto-derived from parents."""
+    current, seen = investigates, set()
+    while current:
+        require(current != item_id, "cycle in investigation lineage")
+        if current in seen:
+            break
+        seen.add(current)
+        node = state["hypothesis"].get(current)
+        require(node is not None, f"investigates: unknown hypothesis ID {current}")
+        current = node.get("investigates")
+
+
 def put(state, kind, data):
     require(isinstance(data, dict), "record must be an object")
     nonempty(data, "id")
@@ -191,6 +205,11 @@ def put(state, kind, data):
         ids = refs(state, data, "evidence", "evidence")
         parents = refs(state, data, "parents", "hypothesis")
         acyclic(state, kind, data["id"], parents)
+        investigates = data.get("investigates")
+        if investigates is not None:
+            require(isinstance(investigates, str) and investigates in state["hypothesis"], "investigates: unknown hypothesis ID")
+            nonempty(data, "investigation_question")
+            investigation_acyclic(state, data["id"], investigates)
         if data["status"] in {"supported", "ruled_out", "confirmed"}:
             valid_evidence(state, ids)
         if data["status"] in {"ruled_out", "confirmed"}:
@@ -226,6 +245,7 @@ def put(state, kind, data):
         require(data["id"] == "current", "checkpoint ID must be current")
         nonempty(data, "summary", "next_action", "reason", "environment")
         refs(state, data, "evidence", "evidence")
+        refs(state, data, "focus_hypotheses", "hypothesis")
         baseline = data.get("baseline")
         require(baseline is None or isinstance(baseline, str) and baseline in state["scenario"], "unknown baseline")
         if baseline:
@@ -284,6 +304,7 @@ def change(state, command, data, kind=None):
         require(not any(t["status"] in {"running", "submitted"} for t in state["task"].values()),
                 "reconcile running/submitted tasks before closing")
         ids = refs(state, data, "evidence", "evidence")
+        root_ids = refs(state, data, "hypotheses", "hypothesis")
         if data["outcome"] in {"root_cause", "fix_verified"}:
             valid_evidence(state, ids)
             require(data.get("route") in {"evidence_chain", "targeted_fix"}, "closure route required")
@@ -291,6 +312,10 @@ def change(state, command, data, kind=None):
             decision_review(state, data)
             require(all(t["status"] in {"done", "cancelled"} for t in state["task"].values()),
                     "finish or explicitly cancel remaining tasks before successful closure")
+        if data["outcome"] == "root_cause" and data.get("route") == "evidence_chain":
+            require(root_ids, "confirmed root hypothesis required for evidence_chain closure")
+            require(all(state["hypothesis"][hid]["status"] == "confirmed" for hid in root_ids),
+                    "closure hypotheses must be confirmed")
         state.update(status="closed", closure=copy.deepcopy(data))
         result = state["closure"]
     elif command == "reopen":

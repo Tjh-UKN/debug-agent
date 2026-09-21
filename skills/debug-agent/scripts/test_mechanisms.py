@@ -58,7 +58,7 @@ class MechanismTests(unittest.TestCase):
     def closure(self, eid="E1", **extra):
         return {"rev": self.state()["rev"], "outcome": "root_cause", "route": "evidence_chain",
                 "conclusion": "合成局部原因", "scope": "分区0", "limitations": "未验证大场景",
-                "acceptance_check": "局部证据链", "evidence": [eid], "decision_review": self.review(eid), **extra}
+                "acceptance_check": "局部证据链", "hypotheses": ["H1"], "evidence": [eid], "decision_review": self.review(eid), **extra}
 
     def correct(self):
         return self.put("evidence", self.evidence("E3", supersedes=["E1"], correction_reason="原观察范围错误"))
@@ -110,6 +110,9 @@ class MechanismTests(unittest.TestCase):
         for eid in ("E1", "E2"):
             with self.assertRaisesRegex(ValueError, "valid evidence"):
                 case.execute(self.directory, "close", self.closure(eid))
+        # The new closure contract requires a confirmed root hypothesis again.
+        h1 = self.state()["hypothesis"]["H1"]
+        self.put("hypothesis", self.hypothesis(eid="E3", rev=h1["rev"]))
         case.execute(self.directory, "close", self.closure("E3"))
         self.assertEqual(self.state()["status"], "closed")
 

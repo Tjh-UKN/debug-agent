@@ -43,11 +43,11 @@ python <skill-dir>/scripts/case.py --case <case-dir> show --history
 
 | kind | 必需内容 | 状态与关联 |
 |---|---|---|
-| hypothesis | claim、basis、prediction、reason | status 为 open/supported/ruled_out/unresolved/confirmed；evidence 为证据 ID 列表，parents 为假设 ID 列表 |
+| hypothesis | claim、basis、prediction、reason | status 为 open/supported/ruled_out/unresolved/confirmed；evidence 为证据 ID 列表，parents 为逻辑必要前提（AND）；investigates 为被调查的假设 ID 或缺省，investigation_question 在 investigates 非空时必填，说明该分支要回答的局部问题 |
 | evidence | observation、source、scope、context、limits、validity | validity 为 valid/invalid/uncertain；scope 写实际检查的设备/rank/step/字段/本地或全局对象等适用范围；source 指向原始来源；context 保存与解释有关的运行条件 |
 | scenario | description、changes、cost、reason、reproduction | reproduction 为 original/retained/not_observed/different/uncertain；parent 为父场景 ID 或 null；evidence 为证据 ID 列表 |
 | task | question、action、acceptance、owner、reason、status | depends_on 为任务 ID 列表，hypotheses 为假设 ID 列表，scenario 为场景 ID 或 null；run 可存运行信息 |
-| checkpoint | summary、next_action、reason、environment | id 固定 current；baseline 为当前保留问题表现的场景 ID 或 null；evidence 为关键证据 ID 列表 |
+| checkpoint | summary、next_action、reason、environment | id 固定 current；baseline 为当前保留问题表现的场景 ID 或 null；evidence 为关键证据 ID 列表；focus_hypotheses 为当前前沿假设 ID 列表（可选，只作恢复焦点） |
 
 列表缺省为空，单个关联缺省为空。状态判断仍由 agent 负责，脚本只检查结构、关联和转换；脚本不会判断证据是否真实或科学结论是否成立。`limits` 没有已知限制时明确填写，不省略。
 
@@ -63,7 +63,16 @@ python <skill-dir>/scripts/case.py --case <case-dir> show --history
 
 旧记录及其衍生证据保留原文但不能再支持结论；引用它们或相关父假设的判断转为 unresolved，相关 retained 场景转 uncertain，已 done 的关联任务回到 submitted 等待重审。运行中任务不会被停止或重提，只标记 `needs_review`；checkpoint 同样提示重审。已关闭案例收到更正会重开，旧结论保留在 history。主 agent 根据影响重审，不自动判定相反假设成立；补充新证据不会自动恢复被撤回的衍生结论。未显式登记的文字依赖由主 agent 补查。
 
-假设 supported/ruled_out/confirmed、场景 retained 必须引用当前有效证据。ruled_out/confirmed 还须填写下面的 `decision_review`。要撤回判断可以更新为 open/unresolved，保留理由。场景缩减未复现不自动改变任何假设。parents、parent、depends_on 不允许形成环；证据依赖只能指向已有记录，不同假设仍可共享证据。
+假设 supported/ruled_out/confirmed、场景 retained 必须引用当前有效证据。ruled_out/confirmed 还须填写下面的 `decision_review`。要撤回判断可以更新为 open/unresolved，保留理由。场景缩减未复现不自动改变任何假设。parents、parent、depends_on、investigates 不允许形成环；证据依赖只能指向已有记录，不同假设仍可共享证据。
+
+### 调查来源与逻辑前提
+
+两种关系回答两个不同的问题，禁止互相推导或混用：
+
+- `investigates` 回答“为什么会调查这个节点”。当前判断是为了继续解释或缩小上游判断的来源而创建时写入，如 `H2.investigates = H1`。它构成调查树：某个候选被排除只剪该分支及其子树，不修改兄弟节点，也不自动撤回被调查节点；失败分支保留为历史。
+- `parents` 回答“这个结论为什么能成立”。只有当“上游判断不成立，则当前判断本身也不能成立”为真时才写，多个 parents 按 AND 型必要前提解释。逻辑前提失效沿既有 correction 机制把依赖结论置为 unresolved/needs_review。
+
+只有当两种关系同时为真时才同时登记，例如既为调查 H1 的来源、又只有在 H1 成立时才有意义：此时 `investigates` 与 `parents` 分别登记，各自行使撤回与回溯语义。禁止因为“H2 investigates H1”就自动写 `H2.parents=[H1]`。分支被排除后回溯到最近仍有有效候选的祖先继续，不重启案例、不删除失败分支；一个判断 confirmed 不等于满足整体目标，继续沿 investigates 追来源直到满足 goal/acceptance。历史案例缺少 investigates 时显示“未登记调查来源”，不从自然语言回填猜测。
 
 ## 派工、提交和验收
 
@@ -112,7 +121,7 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
 
 恢复先读 show：当前 checkpoint、活跃假设、baseline、running/blocked/submitted 任务。核实正在运行的作业与产物是否属于当前版本；旧 checkpoint 是恢复线索，不是免核实的事实。没有正在执行的任务且状态明确时，直接继续 next_action。
 
-优先使用 `python <skill-dir>/scripts/recovery.py resume --case <case-dir>` 汇总上述信息；它不会变更状态或启动作业。`show` 本身也不创建锁文件，只有写入需要锁。恢复提示会指出 checkpoint 之后的更新、已失效的基线和待验收结果。没有明确案例时使用 `recovery.py list --project <cwd>`，不从多个候选中猜选。
+优先使用 `python <skill-dir>/scripts/recovery.py resume --case <case-dir>` 汇总上述信息；它不会变更状态或启动作业。resume 额外返回 investigation 段：focus 的 root→focus 定位路径、active frontier、pruned/stale 分支；恢复的是调查状态而不只是执行队列。frontier 上的 confirmed 节点仍可能需要继续追来源；pruned 只作历史提示，stale 先重审前提。调查追踪用只读 `python <skill-dir>/scripts/trace.py --case <case-dir> tree|path|why|impact|frontier`：path 解释“为什么调查到这里”（只沿 investigates），why 解释“凭什么成立”（只沿 parents 与证据），impact 显示显式引用的影响范围；缺失关系如实标注，不猜测。`show` 本身也不创建锁文件，只有写入需要锁。恢复提示会指出 checkpoint 之后的更新、已失效的基线和待验收结果。没有明确案例时使用 `recovery.py list --project <cwd>`，不从多个候选中猜选。
 
 证据、问题边界或环境变化时更新 checkpoint：summary 保存简短的整体问题、已知/未知与当前边界，next_action 保存当前关键问题及预期缩小的范围。复用这些现有字段，不建立另一份问题账本，不逐命令记录。
 
@@ -122,6 +131,7 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
 {
   "rev":12,"outcome":"root_cause","route":"evidence_chain",
   "conclusion":"具体原因与机制","scope":"当前小场景及适用条件",
+  "hypotheses":["H_ROOT"],
   "evidence":["E1"],"acceptance_check":"说明如何满足用户验收",
   "decision_review":{
     "scope_check":"证据实际覆盖当前小场景；外推依据或不外推的边界",
@@ -132,6 +142,8 @@ outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项
   "limitations":"原大场景未验证，后续可以补充，不阻碍当前闭环"
 }
 ```
+
+root_cause + evidence_chain 的闭环必须用 `hypotheses` 显式关联至少一个 confirmed 根因假设，供 why trace 机械生成审计路径；fix_verified/targeted_fix 不强制内部机制已确认，`hypotheses` 可为空；narrowed/blocked 无此要求。历史已关闭案例读取兼容，只有新的 close 操作执行新约定。
 
 成功 outcome 为 root_cause/fix_verified，route 为 evidence_chain/targeted_fix，两条路径任选其一。必须有有效证据和验收说明，无运行中或待验收任务；剩余非必要任务应说明理由后取消，不为关账伪造完成。未完成可用 narrowed/blocked，说明下一步与缺失条件，不称为成功。
 
