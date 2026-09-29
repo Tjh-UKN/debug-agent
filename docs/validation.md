@@ -1,5 +1,32 @@
 # 机制、接入与长任务恢复验证
 
+## 0.8.0 默认直接诊断与产物校验（2026-09-29）
+
+同日产品整理：把诊断决策集中到 SKILL.md；runtime.md 只保留运行身份、对象复用、异步依赖和插桩的特殊边界。删除卡片教程与重复诊断示例，display/evaluation 旧路径只留简短兼容说明；评估设计统一放在仓库 docs 中。commands 与 tasks 压缩为按需接口说明，旧脚本、schema 和用户数据不删除。msprobe 明确已有 scan 可直接 query，局部查询无需强制全卡重扫，局部结论不外推。
+
+相对本轮整理前的工作区快照，Skill 入口与 references 文档总字符数从 26,550 降到约 15,328（减少 42%）；README 从 5,647 降到 2,199（减少 61%）。仅是文字量，不是定位性能结果。全部 102 项测试再次通过，另检查 frontmatter、本地文件路由与 diff；本轮没有新增模型行为实验或重新运行设备任务。
+
+默认入口改为直接诊断、按需读取工具；移除根文件内的调查树字段教学，普通问题不要求建账本或显示卡片。commands、display、SessionStart 提醒与别名入口同步调整，既有账本/调查树实现和旧案例格式保持不变。SKILL 正文从 2,204 个 Unicode 字符降至 1,039（约减少 53%，不含 frontmatter；不是 token 或实际耗时测量）。
+
+新增按需运行时取证参考：实际加载身份、对象复用、异步完成、插桩扰动、局部干预和重复实验的判别边界；不把某个案例的 `-1`、固定层或 A/B/A 变成通用强制流程。后续按用户反馈补明确：相关执行路径理解与局部 review 的边界；原场景补观察、独立对照、场景缩减的分别适用条件；由模型比较已有 trace、工具和局部插桩，不设固定升级顺序。进一步区分“联合分析后的充分性判断”和“步骤有效性”：重要核查需要明确改变了哪个关键未知，允许纠正前提后扩大范围，不把单调缩小或完成工具调用视为诊断进展。这些指导只做静态一致性校验，行为收益仍未验证。新增 `evidence.py capture/show/verify`：仅复制明确指定的已有产物，保存大小、SHA256 与捕获信息，校验后输出有行号的摘录；不执行命令、不连接服务器、不自动登记 confirmed。调用方提供的上下文显式标为 declared_context。
+
+安装器新增只读 `--check`，比较所有受管理文件实际内容及检查本地 Markdown 文件路由，修复原核心指向不存在 commands.md 的路由。插件版本和描述同步到 0.8.0。安装核查发现旧 Codex 副本缺少本轮文件及 0.7.0 的 investigation/trace；通过原有备份更新流程同步本机 Codex，26 个受管理文件与源码一致。未更新其他宿主或外部插件市场。
+
+验证命令与结果：
+
+```sh
+python -X utf8 -m unittest discover -s skills/debug-agent/scripts -p 'test_*.py'
+# 78 passed：原有 65 项 + 13 项产物快照测试
+python -X utf8 -m unittest discover -s scripts -p 'test_*.py'
+# 24 passed：原有 20 项 + 4 项安装/路由校验
+python -X utf8 scripts/install.py codex --check
+# matches=true；26 managed files
+```
+
+另通过 Skill frontmatter 校验、插件 JSON 解析和 git diff --check。真实已有产物只读检查：使用上轮案例的统计 JSON、指标日志及候选补丁，保存 3 个文件共 5,951 字节，verify 报 intact=true/sources_match=true；show 精确返回指标日志第 3、4 行，两条 engine 的 preemptions 均为 0。原文件哈希未变化，没有重新运行模型或远程实验。私有原始产物和本地输出不入库。
+
+独立行为对照尝试：已在仓库外准备三份相同 CPU 小案例，分别指定“直接诊断”“工具与必要资料”“新版 Skill”，使用独立上下文且不向执行者提供答案。三个子 agent 都因账户用量限制在启动阶段失败，未产生报告。故本轮行为对照为**未执行**，没有定位质量、调用次数或耗时比较；不能宣称已证明更稳定或更快。后续完整案例与成本评价见 [改进目标与验证计划](diagnostic-effectiveness.md)。
+
 ## 0.7.0 调查树与回溯（2026-09-21）
 
 依据《Debug Agent Investigation Trace & Backtracking》设计文档与开发者实施指南，在不重构现有账本的前提下补齐两类关系的显式区分：`investigates` 记录“为什么会调查这个节点”（调查树），`parents` 只记录逻辑必要前提（AND 型依赖 DAG）。两者禁止互相推导，由脚本校验与投影分则保证。

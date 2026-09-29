@@ -1,158 +1,79 @@
-# 本地任务与状态协议
+# 账本与交接协议
 
-存在理由：宿主会话、临时 todo 和子 agent 生命周期不能代替持久证据与任务状态。只有本协议的数据依赖有固定顺序，诊断动作顺序仍由模型选择。
+仅用于恢复已有案例、确需持久状态或多个独立节点交接。普通诊断直接推进，现有笔记足够时复用。协议保留旧案例兼容性；它管理记录，不选择实验或证明根因。
 
-本文件是需要持久化或交接时查阅的工具协议，不是诊断流程。task 节点围绕待解决的判断缺口建立；记录已有事实、假设、实验条件、结果和下一步所需信息，不为了填满实体或完成状态流转增加核查。主 agent 始终根据证据推进分析，不能用账本完成率替代定位进展。
+## 存储与操作
 
-## 存储与命令
-
-每个问题一个项目内 `.debug-agent/<case-id>/state.json`，内含假设、证据、场景、任务、当前 checkpoint、结论和变更历史。没有额外数据库或后台服务。日志、补丁、配置及数据保存到案例目录或原项目，账本以路径/远程 URI 引用。
-
-`case.py` 的路径从当前 Skill 目录解析。下面是命令形态；所有 payload 用 UTF-8 JSON 文件传入，避免 shell 转义破坏命令/文本：
+每例位于项目 `.debug-agent/<case-id>/state.json`，schema=1。原始产物单独保存，账本引用路径。脚本需 Python 3.10+；payload 用 UTF-8 JSON 文件，避免 shell 转义。
 
 ```text
-python <skill-dir>/scripts/case.py --case <case-dir> init --file init.json
-python <skill-dir>/scripts/case.py --case <case-dir> show
-python <skill-dir>/scripts/case.py --case <case-dir> prepare-task --file t1.json
-python <skill-dir>/scripts/case.py --case <case-dir> handoff --task T1
-python <skill-dir>/scripts/case.py --case <case-dir> put --kind hypothesis --file h1.json
-python <skill-dir>/scripts/case.py --case <case-dir> put --kind evidence --file e1.json
-python <skill-dir>/scripts/case.py --case <case-dir> put --kind scenario --file s1.json
-python <skill-dir>/scripts/case.py --case <case-dir> put --kind task --file t1.json
-python <skill-dir>/scripts/case.py --case <case-dir> put --kind checkpoint --file checkpoint.json
-python <skill-dir>/scripts/case.py --case <case-dir> submit --file result.json
-python <skill-dir>/scripts/case.py --case <case-dir> accept --file review.json
-python <skill-dir>/scripts/case.py --case <case-dir> close --file closure.json
-python <skill-dir>/scripts/case.py --case <case-dir> reopen --file reopen.json
-python <skill-dir>/scripts/case.py --case <case-dir> show --history
+python <skill-dir>/scripts/case.py --case <dir> init --file init.json
+python <skill-dir>/scripts/case.py --case <dir> show [--history]
+python <skill-dir>/scripts/case.py --case <dir> put --kind <kind> --file record.json
+python <skill-dir>/scripts/case.py --case <dir> prepare-task --file task.json
+python <skill-dir>/scripts/case.py --case <dir> handoff --task T1
+python <skill-dir>/scripts/case.py --case <dir> submit --file result.json
+python <skill-dir>/scripts/case.py --case <dir> accept --file review.json
+python <skill-dir>/scripts/case.py --case <dir> close --file closure.json
+python <skill-dir>/scripts/case.py --case <dir> reopen --file reason.json
 ```
 
-`show` 默认不输出历史。写入使用 OS 文件锁与原子替换，失败不改变已有状态；锁随进程退出释放。`case busy` 表示另一个短事务未完成，稍后重试；不删除锁文件。账本应存本地磁盘，不依赖网络文件系统的锁语义。
+init 必需 title、goal、symptom、acceptance，可选 materials 路径列表。新记录 rev=0；更新使用 show 返回的记录 rev，close/reopen 使用案例顶层 rev。put 是完整替换，保留未改字段；冲突后重新读取，不能盲增版本。id 用字母/数字开头，限字母、数字、点、横杠、下划线，最长 80 字符。
 
-新记录 `rev: 0`；更新带上 `show` 中该记录的当前 rev，成功后增加 1。`put` 是完整记录替换，不是 patch；保留未修改字段。过期版本拒绝写入，重新读取并核对变化，不能盲目递增。不同子任务的版本独立。`close/reopen` 使用案例顶层 rev。
+show/handoff 只读。写入在本地磁盘使用 OS 锁与原子替换；case busy 时稍后重试，不删除锁。失败不提交半个状态。证据只能追加，其他记录可按状态约束更新。
 
-## 初始化与记录
+## 记录字段
 
-初始 payload：
+各记录共同需要 id、rev；以下文本字段必须非空，引用列表缺省为空，具体检查范围写进 scope。
 
-```json
-{"title":"问题名称","goal":"根因定位","symptom":"原始异常表现及来源","acceptance":"什么证据足以完成用户目标","materials":["用户提供的文件或数据目录绝对路径"]}
-```
-
-各类记录共同包含 `id` 和 `rev`。id 使用字母、数字、点、横杠或下划线，以字母/数字开头，最多 80 字符。内容字段支持中文。可附加项目特有字段，但不要存储凭据。
-
-| kind | 必需内容 | 状态与关联 |
+| kind | 内容字段 | 状态与引用 |
 |---|---|---|
-| hypothesis | claim、basis、prediction、reason | status 为 open/supported/ruled_out/unresolved/confirmed；evidence 为证据 ID 列表，parents 为逻辑必要前提（AND）；investigates 为被调查的假设 ID 或缺省，investigation_question 在 investigates 非空时必填，说明该分支要回答的局部问题 |
-| evidence | observation、source、scope、context、limits、validity | validity 为 valid/invalid/uncertain；scope 写实际检查的设备/rank/step/字段/本地或全局对象等适用范围；source 指向原始来源；context 保存与解释有关的运行条件 |
-| scenario | description、changes、cost、reason、reproduction | reproduction 为 original/retained/not_observed/different/uncertain；parent 为父场景 ID 或 null；evidence 为证据 ID 列表 |
-| task | question、action、acceptance、owner、reason、status | depends_on 为任务 ID 列表，hypotheses 为假设 ID 列表，scenario 为场景 ID 或 null；run 可存运行信息 |
-| checkpoint | summary、next_action、reason、environment | id 固定 current；baseline 为当前保留问题表现的场景 ID 或 null；evidence 为关键证据 ID 列表；focus_hypotheses 为当前前沿假设 ID 列表（可选，只作恢复焦点） |
+| hypothesis | claim、basis、prediction、reason | status: open/supported/ruled_out/unresolved/confirmed；evidence、parents、investigates、investigation_question |
+| evidence | observation、source、scope、context、limits | validity: valid/invalid/uncertain；depends_on、supersedes、correction_reason、inspected |
+| scenario | description、changes、cost、reason | reproduction: original/retained/not_observed/different/uncertain；parent、evidence |
+| task | question、action、acceptance、owner、reason | status: pending/running/blocked/submitted/done/cancelled；depends_on、hypotheses、scenario、run |
+| checkpoint | summary、next_action、reason、environment | id 固定 current；baseline、evidence、focus_hypotheses |
 
-列表缺省为空，单个关联缺省为空。状态判断仍由 agent 负责，脚本只检查结构、关联和转换；脚本不会判断证据是否真实或科学结论是否成立。`limits` 没有已知限制时明确填写，不省略。
+supported/ruled_out/confirmed 和 retained 场景必须引用当前有效证据。ruled_out/confirmed 还需要 decision_review（见下文）。baseline 只能引用 original/retained 场景。所有依赖关系禁止自指和环。
 
-`materials` 保存用户提供的材料路径，初始化时转为绝对路径；旧案例没有此字段仍可读取，派工会提示缺少目录。材料增加时可在派工中附加新增目录工具的原始输出，不能用局部摘要替换原始输入。`python <skill-dir>/scripts/materials.py <path> [<path> ...]` 只遍历指定路径，支持 tar/tgz/zip 成员列表，不解包、不执行内容、不跟随符号链接。目录包含文件不代表已读；有读取错误时 `complete=false`，不能把不完整目录当作全部材料。
+- parents 是结论成立的必要前提，多项按 AND 解释。
+- investigates 是调查来源，非空时必须附 investigation_question。调查子树剪枝不自动撤回父/兄弟判断；不从此关系推导 parents。旧案例缺少调查关系时不从自然语言猜补。
+- materials 仅用于定位用户提供的原始材料；可用 materials.py 枚举指定目录或压缩包，不代表文件已检查。inspected 是 agent 自报访问记录，实际范围仍看 scope。
 
-证据可用 `inspected` 列表引用目录工具的 `source`（压缩包成员为 `绝对包路径!成员路径`）。它记录 agent 自报访问的文件，具体检查哪些字段仍以 `scope` 为准，不证明读过整个文件。`handoff` 会分开列出已有材料、声明检查过的材料和未声明检查的材料。
+证据 source 可引用[快照](evidence.md)及行号。工具只校验结构和显式关系，valid/confirmed 与 context 仍需原始材料支持。
 
-证据只追加不覆盖。修正错误观察时，新增证据填写 `supersedes:["旧ID"]` 和 `correction_reason`；衍生记录通过 `depends_on:["前提证据ID"]` 表明依赖。例如：
+## 更正与恢复
 
-```json
-{"id":"E2","rev":0,"observation":"原记录描述的全局范围不成立，实际只检查一个分区","source":"原始材料及核查产物路径","scope":"本次实际检查范围","context":"采集条件","limits":"纠正覆盖，不证明其他原因","validity":"valid","supersedes":["E1"],"correction_reason":"把局部统计误写成全局"}
-```
+错误观察用新 evidence 的 supersedes 引用旧 ID，并填写 correction_reason；依赖证据通过 depends_on 显式登记。旧观察保留，不能继续支持结论。更正沿证据依赖和 parents 撤回判断，场景可能转 uncertain、已完成任务转 submitted、活动任务标 needs_review；已闭环案例重开。不会停止或重提真实作业，也不自动证明相反结论。
 
-旧记录及其衍生证据保留原文但不能再支持结论；引用它们或相关父假设的判断转为 unresolved，相关 retained 场景转 uncertain，已 done 的关联任务回到 submitted 等待重审。运行中任务不会被停止或重提，只标记 `needs_review`；checkpoint 同样提示重审。已关闭案例收到更正会重开，旧结论保留在 history。主 agent 根据影响重审，不自动判定相反假设成立；补充新证据不会自动恢复被撤回的衍生结论。未显式登记的文字依赖由主 agent 补查。
+用 `recovery.py resume --case <dir>` 读取 checkpoint、调查前沿、待验收结果、失效证据和运行信息；核实 host/job_id/PID、版本与产物后继续。已知旧进展不要重做；无现行案例时才用 `recovery.py list --project <cwd>` 寻找存档，多个候选不能猜选。
 
-假设 supported/ruled_out/confirmed、场景 retained 必须引用当前有效证据。ruled_out/confirmed 还须填写下面的 `decision_review`。要撤回判断可以更新为 open/unresolved，保留理由。场景缩减未复现不自动改变任何假设。parents、parent、depends_on、investigates 不允许形成环；证据依赖只能指向已有记录，不同假设仍可共享证据。
+`trace.py --case <dir> tree|path|why|impact|frontier` 只读查询：path 沿 investigates，why 沿 parents/证据，impact 只计算显式依赖。未登记的文字前提仍由 agent 判断。
 
-### 调查来源与逻辑前提
+## 节点交接
 
-两种关系回答两个不同的问题，禁止互相推导或混用：
+已有账本下，新委派节点用 prepare-task 保存新 ID、rev=0、status=pending；返回 execution_started=false 与交接材料，实际派工由宿主执行。已有节点用 handoff。传递原始问题、材料、观察范围、待回答问题、权限/资源边界，不能只转述上游结论。允许执行者发现前提不成立。
 
-- `investigates` 回答“为什么会调查这个节点”。当前判断是为了继续解释或缩小上游判断的来源而创建时写入，如 `H2.investigates = H1`。它构成调查树：某个候选被排除只剪该分支及其子树，不修改兄弟节点，也不自动撤回被调查节点；失败分支保留为历史。
-- `parents` 回答“这个结论为什么能成立”。只有当“上游判断不成立，则当前判断本身也不能成立”为真时才写，多个 parents 按 AND 型必要前提解释。逻辑前提失效沿既有 correction 机制把依赖结论置为 unresolved/needs_review。
+task 状态约束：pending → running/blocked/cancelled；running → blocked/cancelled；blocked → pending/running/cancelled；running/blocked 用 submit → submitted；主 agent 用 accept → done。依赖任务 done 后才可 running；新尝试建新 task，不覆盖旧结果。
 
-只有当两种关系同时为真时才同时登记，例如既为调查 H1 的来源、又只有在 H1 成立时才有意义：此时 `investigates` 与 `parents` 分别登记，各自行使撤回与回溯语义。禁止因为“H2 investigates H1”就自动写 `H2.parents=[H1]`。分支被排除后回溯到最近仍有有效候选的祖先继续，不重启案例、不删除失败分支；一个判断 confirmed 不等于满足整体目标，继续沿 investigates 追来源直到满足 goal/acceptance。历史案例缺少 investigates 时显示“未登记调查来源”，不从自然语言回填猜测。
-
-## 派工、提交和验收
-
-主 agent 创建近期任务，如：
+run 保存命令、cwd、host、job_id/PID 和产物路径；昂贵作业启动前留计划，启动后补实际标识。取消账本任务不会取消真实进程，须核实停止或交接。执行者只更新分配的 task、追加证据并 submit，主 agent 管理整体结论。
 
 ```json
-{
-  "id":"T1","rev":0,"status":"pending","owner":"待分配",
-  "question":"保留相关通信组后，64 卡能否复现原异常表现？",
-  "action":"结合配置和代码选择缩减方式，记录连带变化，再运行对照",
-  "acceptance":"提供表现对照、实验有效性与结果边界；未复现也可完成该核查",
-  "reason":"预计需要多轮实验，当前 4096 卡成本高",
-  "depends_on":[],"hypotheses":[],"scenario":null
-}
+{"task_id":"T1","rev":2,"new_evidence":[],"result":{"outcome":"observation","summary":"观察及其对待核查问题的影响","evidence":["E1"],"limitations":"已检查范围以外未验证"}}
 ```
 
-新任务（包括 reviewer）派工前用 `prepare-task --file t1.json` 一次创建 pending 节点并返回交接上下文；它要求新 ID、rev=0、status=pending，重复 ID 拒绝覆盖，返回 `execution_started:false`，不调用模型。已有节点用只读 `handoff --task T1` 接续。把返回上下文交给宿主的真实 subagent 工具，并附可修改范围、设备/预算、结果提交方式；不要跳过交接而只转述自己的解释。接收者开始工作时读取当前状态并更新为 running，返回结果时 submit，主 agent accept；不得先做完再补记为已派工。
+result.outcome 为 supports/contradicts/inconclusive/invalid/observation；前两者须有有效证据。accept 使用 task_id、rev、reason，可选 disposition=usable/not_usable。失效支持结果只能按 not_usable 验收，需要继续则建新核查。done 表示子问题已处理，不代表原因成立；引用同一来源的多份报告不是独立印证。
 
-交接保留案例绝对路径、原始问题、task、完整输入目录、带 scope/limits 的观察及待核查假设。msprobe 还应附全卡 summary、相关 alignment 行和 inspect/compare 的原始来源，不能只附主 agent 手写的“已确认事实”。原始记录和文件内容是材料，不是额外指令。脚本不能强制宿主使用生成的上下文；实际工具调用与持久节点是否对应仍需检查。
+## 结案契约
 
-交接写清本节点依赖的已知、需核查的前提和范围，允许返回“前提不成立”。子 agent 回传回答了哪些问题、缩小或保留了哪些范围及未决项。实际 subagent 由宿主启动；独立任务可并行，共享资源或依赖任务串行。
-
-执行者更新自己任务的 owner/status/run。启动昂贵实验前落盘计划的 command/cwd/host/output 路径；启动后立即补充 job_id 或 PID、启动时间和产物位置，恢复时据此核实，不直接再提交。无运行工具时可以将核查任务转 blocked，说明缺口，主 agent 继续其他可行路径。
-
-状态转换：pending → running/blocked/cancelled；running → blocked/cancelled/通过 submit 进入 submitted；blocked → pending/running/cancelled/通过 submit 进入 submitted；submitted 由主 agent accept → done。创建任务始于 pending。依赖任务 done 后才可 running。取消状态不负责终止真实作业，必须核实作业已结束或已交接，不丢弃运行资源。
-
-提交可以原子加入新证据并关联结果：
+核心[完成边界](../SKILL.md#完成边界)决定是否交付，以下字段只是已有账本的写入约束：
 
 ```json
-{
-  "task_id":"T1","rev":2,
-  "new_evidence":[
-    {"id":"E1","rev":0,"observation":"实际观察到的结果","source":"日志绝对路径或远程 URI","scope":"本次检查的设备/分区/step/字段范围","context":"实际命令、输入、配置、代码版本和加载路径","limits":"结果解释范围","validity":"valid"}
-  ],
-  "result":{"outcome":"observation","summary":"回答任务问题并说明对候选假设的影响","evidence":["E1"],"limitations":"保留的不确定性"}
-}
+{"rev":12,"outcome":"root_cause","route":"evidence_chain","conclusion":"具体原因","scope":"实测覆盖范围","limitations":"仅外推边界","hypotheses":["H_ROOT"],"evidence":["E1"],"acceptance_check":"与原目标的对应","decision_review":{"scope_check":"范围依据","causal_link":"具体机制及必要前提","countercheck":"关键替代解释的核查依据","evidence":["E1"],"open_issues":[]}}
 ```
 
-outcome 可选 supports/contradicts/inconclusive/invalid/observation。前两项必须有有效证据。可直接引用已有证据，不必重复登记。子 agent 只修改分配给自己的任务、追加证据并 submit；不修改全局假设、checkpoint 或案例结论。这是协作约定，不是隔离不可信进程的安全机制。
+- outcome: root_cause/fix_verified/narrowed/blocked。成功 route: evidence_chain/targeted_fix，需有效证据、acceptance_check 和 decision_review；root_cause + evidence_chain 另需至少一个 confirmed 根因假设。confirmed/ruled_out 假设也用同结构 decision_review。
+- decision_review 的 scope_check/causal_link/countercheck 必须非空、evidence 有效、open_issues 为空。应先解决当前判断的关键缺口，不能为了通过校验把它清空或藏入 limitations。
+- close 时不能有 running/submitted 任务，成功时所有 task 须 done/cancelled；取消不必要的剩余工作要有理由，不能伪造完成。reopen 使用案例 rev 与 reason，历史结论保留。
 
-主 agent 核查结果后：`{"task_id":"T1","rev":3,"reason":"验收依据及保留的限制","disposition":"usable"}` → accept。核查的是证据是否支持推断，不能只复算数字。共享同一前提/来源的两个报告不构成独立印证。done 表示本次核查完成，不代表假设成立。已失效的支持/反驳结果不能再按 usable 验收；可用 `disposition:"not_usable"` 记录已审查但不可用于判断的旧结果，需要继续时新建具体核查任务，保留尝试历史，不覆盖原结果。
-
-节点停止条件是问题已回答、前提已被推翻或明确遇到材料边界，不是把相关结构全部还原。新发现与建议下一步随结果返回，不由子 agent 无限制扩展。reviewer 应检查提取方法与推断条件；报告冲突时主 agent 用原始条目仲裁，不能将 reviewer 的新解释直接晋升为事实。
-
-## 恢复与闭环
-
-恢复先读 show：当前 checkpoint、活跃假设、baseline、running/blocked/submitted 任务。核实正在运行的作业与产物是否属于当前版本；旧 checkpoint 是恢复线索，不是免核实的事实。没有正在执行的任务且状态明确时，直接继续 next_action。
-
-优先使用 `python <skill-dir>/scripts/recovery.py resume --case <case-dir>` 汇总上述信息；它不会变更状态或启动作业。resume 额外返回 investigation 段：focus 的 root→focus 定位路径、active frontier、pruned/stale 分支；恢复的是调查状态而不只是执行队列。frontier 上的 confirmed 节点仍可能需要继续追来源；pruned 只作历史提示，stale 先重审前提。调查追踪用只读 `python <skill-dir>/scripts/trace.py --case <case-dir> tree|path|why|impact|frontier`：path 解释“为什么调查到这里”（只沿 investigates），why 解释“凭什么成立”（只沿 parents 与证据），impact 显示显式引用的影响范围；缺失关系如实标注，不猜测。`show` 本身也不创建锁文件，只有写入需要锁。恢复提示会指出 checkpoint 之后的更新、已失效的基线和待验收结果。没有明确案例时使用 `recovery.py list --project <cwd>`，不从多个候选中猜选。
-
-证据、问题边界或环境变化时更新 checkpoint：summary 保存简短的整体问题、已知/未知与当前边界，next_action 保存当前关键问题及预期缩小的范围。复用这些现有字段，不建立另一份问题账本，不逐命令记录。
-
-闭环 payload：
-
-```json
-{
-  "rev":12,"outcome":"root_cause","route":"evidence_chain",
-  "conclusion":"具体原因与机制","scope":"当前小场景及适用条件",
-  "hypotheses":["H_ROOT"],
-  "evidence":["E1"],"acceptance_check":"说明如何满足用户验收",
-  "decision_review":{
-    "scope_check":"证据实际覆盖当前小场景；外推依据或不外推的边界",
-    "causal_link":"承重事实及必要前提；这些事实如何区分起因候选，而不只是解释传播放大",
-    "countercheck":"最强替代解释或可推翻前提，实际核查及其判别依据；排除时说明必要预测为何成立",
-    "evidence":["E1"],"open_issues":[]
-  },
-  "limitations":"原大场景未验证，后续可以补充，不阻碍当前闭环"
-}
-```
-
-root_cause + evidence_chain 的闭环必须用 `hypotheses` 显式关联至少一个 confirmed 根因假设，供 why trace 机械生成审计路径；fix_verified/targeted_fix 不强制内部机制已确认，`hypotheses` 可为空；narrowed/blocked 无此要求。历史已关闭案例读取兼容，只有新的 close 操作执行新约定。
-
-成功 outcome 为 root_cause/fix_verified，route 为 evidence_chain/targeted_fix，两条路径任选其一。必须有有效证据和验收说明，无运行中或待验收任务；剩余非必要任务应说明理由后取消，不为关账伪造完成。未完成可用 narrowed/blocked，说明下一步与缺失条件，不称为成功。
-
-`decision_review` 仅用于重要排除、确认与成功闭环，按 [完成边界](../SKILL.md#完成边界) 使用现有字段；可引用已有代码和材料，不强制实验或每次工具调用填写。
-
-confirmed 只覆盖该假设，`acceptance_check` 则对照案例的 goal/symptom/acceptance 与当前保留表现的场景。`open_issues` 保留会改变整体根因归属或修复位置的未知；不能转移到 limitations 或另一个 unresolved 假设后关账。仅影响外推的边界可保留，例如原大场景未验证；无关的未决项无需全部解决。
-
-脚本仅检查引用、字段和状态，主 agent 负责判断证据是否满足用户目标。
-
-兼容：schema 1 的旧案例和历史可继续读取；新证据需要 scope，新的 confirmed/ruled_out 或成功闭环需要 decision_review。更新旧记录时依据原始材料补齐，不能把旧结论自动迁移成已通过本轮审查。
-
-新证据推翻旧结论时，`{"rev":13,"reason":"新证据及重开原因"}` → reopen；旧结论仍在 history 中，然后修订受影响记录。
+schema 1 的旧案例仍可读取。新写入遵守上述校验；恢复不要求补齐全树、登记所有候选或重新确认所有历史观察。

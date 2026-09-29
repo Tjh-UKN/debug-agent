@@ -1,8 +1,16 @@
 {
   "name": "debug-agent",
-  "version": "0.6.1",
-  "description": "Evidence-driven precision diagnosis with persistent tasks, experiment reduction and professional status cards.",
-  "author": {"name": "Tjh-UKN", "url": "https://github.com/tjh-ukn"},
+  "version": "0.8.0",
+  "description": "Root-cause diagnosis for AI correctness issues with on-demand evidence tools.",
+  "author": {
+    "name": "Tjh-UKN",
+    "url": "https://github.com/tjh-ukn"
+  },
   "repository": "https://github.com/tjh-ukn/debug-agent",
-  "keywords": ["precision", "debugging", "hypothesis", "experiments"]
+  "keywords": [
+    "precision",
+    "debugging",
+    "hypothesis",
+    "experiments"
+  ]
 }

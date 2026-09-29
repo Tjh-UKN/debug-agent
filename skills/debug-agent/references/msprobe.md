@@ -2,6 +2,8 @@
 
 msprobe 是已知输入协议。以下规则直接用于分析，不把执行序、栈关联或全卡覆盖当作每次重新猜测的假设。
 
+解释统计量或分片对象时按需查[数值证据范围](precision.md)；选择训练异常的材料窗口时查[训练资料索引](training.md)。
+
 ## 四条基础约束
 
 1. `dump.json["data"]` 的记录顺序就是执行序。按原顺序保留前向、反向和 `is_recompute`，不按 API 名或编号重新排序；反向期间的重计算仍是前向记录，不把它数成新的模型层。
@@ -13,7 +15,7 @@ msprobe 是已知输入协议。以下规则直接用于分析，不把执行序
 
 Python 3.10+，标准库即可。输入可为压缩包（tar/tgz/zip）、解包目录或单个 dump.json；压缩包只读，不解包、不执行内容。目录中的 `stepN/rankN` 或 `step_N/rank_N` 用于识别范围。重复 step/rank 报错；没有这些标识时标为 unknown，不默认为 rank0。
 
-两端比较先运行一次全卡扫描（`<new-output-dir>` 必须是新目录）：
+需要全卡对齐概览且没有可信扫描时执行一次 scan（`<new-output-dir>` 必须是新目录）；已有扫描直接用下方 query，不重扫。明确只查看某次调用时可以直接 compare/inspect，并保留局部范围：
 
 ```sh
 python <skill-dir>/scripts/msprobe.py scan --left <npu-data> --right <gpu-data> --out <new-output-dir>

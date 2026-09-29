@@ -1,15 +1,13 @@
-# 接入与能力边界
+# 宿主接入边界
 
-核心 Skill 可移植，脚本仅需 Python 3.10+ 标准库。仓库提供 Codex 与 Claude Code 插件格式，以及独立 Skill 安装。
+| 宿主 | 显式入口 | 安装方式 |
+|---|---|---|
+| Codex | `$debug-agent <问题>` | 源码仓库 `python scripts/install.py codex` |
+| Pi | `/skill:debug-agent <问题>` | 在实际 Pi 环境执行 `python3 scripts/install.py pi` |
+| Claude Code | `/debug-agent:debug <问题>` | 插件市场安装；可选别名由 `scripts/install.py claude-alias` 创建 |
 
-- Codex：在仓库执行 `python scripts/install.py codex`；已有版本加 `--update` 备份后更新。显式入口 `$debug-agent`；新会话通过 description 自动选择。`agents/openai.yaml` 允许隐式调用，实际是否匹配由宿主决定。
-- Claude Code：`claude plugin marketplace add tjh-ukn/debug-agent`，再 `claude plugin install debug-agent@debug-agent-marketplace`。入口 `/debug-agent:debug`。克隆仓库后可运行 `python scripts/install.py claude-alias` 安装 `/debug-agent` 别名；别名依赖该克隆位置，不单独安装 hook。
-- 两端共享核心规则、参数路由与展示协议，查看 [命令路由](commands.md) 和 [展示协议](display.md)。
+脚本需 Python 3.10+，仅依赖标准库。更新加 `--update`，旧文件会备份；`--check` 只读比较受管理文件的内容与本地路由。详细安装命令在源码仓库 README。
 
-Claude Code 插件包含默认不启用的 SessionStart 提醒，由 `on/off` 控制 `~/.debug-agent/config.json`，或 `DEBUG_AGENT_CONFIG` 指定的隔离文件。安装 hook 且开启后，启动/恢复/压缩时提供入口和当前项目账本候选，模型仍须核实真实状态。Bash 启动脚本优先选择 `python3`，其次 `python`，兼容没有未版本化 python 命令的 WSL。
+隐式选择由宿主决定，不保证触发。Claude Code 的 SessionStart 提醒默认关闭，on/off 只保存提醒偏好；Codex/Pi 未实现同类 hook。别名指向本地克隆，移动克隆后需重装。更改提醒不启动或停止实验，也不改变授权。
 
-Codex 当前只接入 Skill 自动选择，未安装 SessionStart hook；不能声称 `on` 能强制跨会话注入。`off` 只关闭启动提醒，不代替宿主禁用设置，也不取消运行实验。
-
-状态由 agent 在关键节点主动保存，恢复时读取；没有后台调度器、循环 Stop hook、遥测或模型 API。subagent 与实验执行依赖宿主真实工具和已有授权。完整安装文档在仓库 README。
-
-参考：https://learn.chatgpt.com/docs/build-skills 与 https://code.claude.com/docs/en/plugins 。本地格式/脚本检查不等于各宿主客户端端到端验证。
+实验、远程连接与子 agent 使用宿主已有能力。本项目不提供模型服务、设备权限、后台调度或自动重提作业；恢复须核实实际状态。

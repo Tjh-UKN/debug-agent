@@ -13,7 +13,7 @@ from control import read_config, set_mode
 from panel import render, table, width
 from recovery import discover, snapshot
 from case import execute
-from install import install
+from install import broken_references, check_installation, install
 import install as installer
 
 spec = importlib.util.spec_from_file_location("session_hook", ROOT / "hooks" / "session.py")
@@ -127,6 +127,37 @@ class IntegrationTests(unittest.TestCase):
         output = render(state())
         self.assertNotIn("█", output)
         self.assertIn("尚无已登记任务", output)
+
+    def test_install_check_is_read_only_for_missing_installation(self):
+        before = list(self.home.rglob("*"))
+        result = check_installation("codex", self.home)
+        self.assertFalse(result["matches"])
+        self.assertIn("SKILL.md", result["missing"])
+        self.assertEqual(before, list(self.home.rglob("*")))
+
+    def test_install_check_detects_missing_and_modified_files(self):
+        destination, _ = install("codex", self.home)
+        self.assertTrue(check_installation("codex", self.home)["matches"])
+        (destination / "scripts" / "trace.py").unlink()
+        (destination / "SKILL.md").write_text("stale", encoding="utf-8")
+        result = check_installation("codex", self.home)
+        self.assertIn("scripts/trace.py", result["missing"])
+        self.assertIn("SKILL.md", result["changed"])
+        install("codex", self.home, update=True)
+        self.assertTrue(check_installation("codex", self.home)["matches"])
+
+    def test_local_reference_check_ignores_examples_but_rejects_missing_route(self):
+        source = self.home / "skill"
+        source.mkdir()
+        (source / "SKILL.md").write_text(
+            "[missing](commands.md)\n[web](https://example.com/missing)\n"
+            "```text\n[example](not-a-file.md)\n```\n", encoding="utf-8")
+        self.assertEqual(broken_references(source), [{"file": "SKILL.md", "target": "commands.md"}])
+        (source / "commands.md").write_text("# Commands\n", encoding="utf-8")
+        self.assertEqual(broken_references(source), [])
+
+    def test_source_routes_remain_installable(self):
+        self.assertEqual(broken_references(ROOT / "skills" / "debug-agent"), [])
 
     def test_progress_is_from_tasks_not_hypotheses(self):
         data = state()

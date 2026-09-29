@@ -1,6 +1,16 @@
 {
   "name": "debug-agent-marketplace",
-  "metadata": {"description": "Evidence-driven precision diagnosis with persistent tasks and professional status cards."},
-  "owner": {"name": "Tjh-UKN"},
-  "plugins": [{"name": "debug-agent", "source": "./", "description": "Hypothesis-driven precision diagnosis"}]
+  "metadata": {
+    "description": "Root-cause diagnosis for AI correctness issues."
+  },
+  "owner": {
+    "name": "Tjh-UKN"
+  },
+  "plugins": [
+    {
+      "name": "debug-agent",
+      "source": "./",
+      "description": "Code and data diagnosis with evidence tools and optional recovery"
+    }
+  ]
 }

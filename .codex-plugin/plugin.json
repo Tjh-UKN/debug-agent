@@ -1,18 +1,23 @@
 {
   "name": "debug-agent",
-  "version": "0.6.1",
-  "description": "Hypothesis-driven precision diagnosis with persistent tasks and evidence-based status cards.",
+  "version": "0.8.0",
+  "description": "Root-cause diagnosis for AI correctness issues with on-demand evidence tools.",
   "author": {
     "name": "Tjh-UKN"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Debug Agent",
-    "shortDescription": "Diagnose precision issues with evidence and experiments.",
-    "longDescription": "Investigate precision problems, reduce reproduction cost, coordinate persistent tasks and inspect evidence through professional diagnosis cards.",
+    "shortDescription": "Find causes of AI correctness issues with verifiable evidence.",
+    "longDescription": "Combine code and data analysis, collect only missing evidence, and stop at a supported conclusion. Optional case recovery preserves prior work.",
     "developerName": "Tjh-UKN",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
-    "defaultPrompt": ["Use $debug-agent to diagnose this precision issue."]
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $debug-agent to diagnose this precision issue."
+    ]
   }
 }

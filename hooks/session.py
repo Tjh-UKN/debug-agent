@@ -14,7 +14,7 @@ def context_for(payload, config_path=None):
         return None
     skill = ROOT / "skills" / "debug-agent" / "SKILL.md"
     context = (f"[Debug Agent ON] 精度诊断会话提醒已开启。处理精度定位或恢复已有诊断时，"
-               f"读取 {skill}，使用专业诊断卡片。与诊断无关的请求正常处理。"
+               f"读取 {skill}，默认直接诊断，按需使用取证与恢复工具。与诊断无关的请求正常处理。"
                "保存的任务仅为恢复线索；先核实运行作业与代码环境，不自动重跑实验。")
     cwd = payload.get("cwd") if isinstance(payload, dict) else None
     if isinstance(cwd, str) and Path(cwd).is_absolute():
