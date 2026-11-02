@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="486" viewBox="0 0 1120 486" role="img" aria-labelledby="title desc">
+  <title id="title">Case 02: a loss spike caused by mismatched reduction scopes</title>
+  <desc id="desc">A synthetic fixture, not an agent transcript. The sum of all token losses is 8 in both steps. Valid token counts change from 4 to 1, making reported loss change from 2 to 8. Applying the mask to the numerator makes both means 2. No gradient or optimizer failure is established.</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#83cbb3" stroke-opacity=".035"/>
+    </pattern>
+  </defs>
+  <rect width="1120" height="486" rx="18" fill="#101916"/>
+  <rect width="1120" height="486" rx="18" fill="url(#grid)"/>
+  <rect x=".5" y=".5" width="1119" height="485" rx="17.5" fill="none" stroke="#30453b"/>
+  <path d="M 0 58 H 1120" stroke="#30453b"/>
+  <g fill="#6d897c">
+    <circle cx="29" cy="29" r="5"/>
+    <circle cx="47" cy="29" r="5"/>
+    <circle cx="65" cy="29" r="5"/>
+  </g>
+  <g font-family="Consolas, 'Liberation Mono', monospace">
+    <text x="91" y="35" font-size="15" fill="#bdcfc5">CASE FILE / 02</text>
+    <text x="1090" y="35" font-size="12" text-anchor="end" letter-spacing="1" fill="#91ac9e">SYNTHETIC FIXTURE</text>
+    <text x="32" y="101" font-size="12" letter-spacing="2" fill="#83cbb3">01 / FIXED RECORDS</text>
+    <text x="32" y="145" font-size="16" fill="#91ac9e">metric</text>
+    <text x="321" y="145" font-size="16" fill="#91ac9e" text-anchor="end">step 41</text>
+    <text x="481" y="145" font-size="16" fill="#91ac9e" text-anchor="end">step 42</text>
+    <path d="M 32 160 H 489" stroke="#30453b"/>
+    <text x="32" y="195" font-size="17" fill="#e9edda">sum(token_losses)</text>
+    <text x="321" y="195" font-size="19" fill="#e9edda" text-anchor="end">8</text>
+    <text x="481" y="195" font-size="19" fill="#e9edda" text-anchor="end">8</text>
+    <text x="32" y="239" font-size="17" fill="#e9edda">sum(valid_mask)</text>
+    <text x="321" y="239" font-size="19" fill="#e9edda" text-anchor="end">4</text>
+    <text x="481" y="239" font-size="19" fill="#f3a08a" text-anchor="end">1</text>
+    <rect x="22" y="258" width="477" height="47" rx="6" fill="#f3a08a" fill-opacity=".075"/>
+    <text x="32" y="288" font-size="17" fill="#e9edda">reported_loss</text>
+    <text x="321" y="288" font-size="22" fill="#e9edda" text-anchor="end">2</text>
+    <text x="481" y="288" font-size="22" font-weight="bold" fill="#f3a08a" text-anchor="end">8</text>
+    <path d="M 534 88 V 331" stroke="#30453b"/>
+    <text x="568" y="101" font-size="12" letter-spacing="2" fill="#83cbb3">02 / WORKLOAD.PY</text>
+    <rect x="558" y="127" width="531" height="41" rx="6" fill="#f3a08a" fill-opacity=".075"/>
+    <path d="M 558 133 V 162" stroke="#f3a08a" stroke-width="3"/>
+    <text x="576" y="153" font-size="19" fill="#f3a08a">numerator = sum(token_losses)</text>
+    <text x="576" y="199" font-size="19" fill="#e9edda">denominator = sum(valid_mask)</text>
+    <text x="576" y="245" font-size="19" fill="#e9edda">return numerator / denominator</text>
+    <text x="576" y="296" font-size="14" fill="#91ac9e">All tokens above. Valid tokens below.</text>
+    <path d="M 32 342 H 1088" stroke="#30453b"/>
+    <text x="32" y="378" font-size="12" letter-spacing="2" fill="#83cbb3">FINDING</text>
+    <text x="147" y="379" font-size="23" font-weight="bold" fill="#e9edda">Reduction scope mismatch.</text>
+    <text x="147" y="411" font-size="16" fill="#83cbb3">Mask the numerator too: both valid-token means become 2.</text>
+    <text x="32" y="457" font-size="13" fill="#91ac9e">Scope: reported metric only. Gradient / optimizer failure is not established.</text>
+  </g>
+</svg>
