@@ -18,7 +18,7 @@
 
 <p align="center">
   <a href="#快速开始">快速开始</a> &nbsp;·&nbsp;
-  <a href="#看一个现场">看一个现场</a> &nbsp;·&nbsp;
+  <a href="#使用案例">使用案例</a> &nbsp;·&nbsp;
   <a href="#安装">安装</a> &nbsp;·&nbsp;
   <a href="docs/diagnostic-architecture.md">诊断结构</a> &nbsp;·&nbsp;
   <a href="docs/validation.md">验证记录</a>
@@ -40,7 +40,7 @@ $debug-agent NPU grad norm 比 GPU 大很多。两端 dump 在 ./npu 和 ./gpu�
 
 已有数据足够就直接分析；有缺口时，再选能改变判断的取证动作。安装后可显式调用，自动选择由宿主决定。
 
-## 看一个现场
+## 使用案例
 
 **Loss 从 2 涨到 8，原因可能藏在指标的分子里。**
 
