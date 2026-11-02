@@ -27,12 +27,102 @@ def frame(code="return layer(x)", line=7, root="/model"):
     return f"File {root}/net.py, line {line}, in forward, \n {code}"
 
 
-def dump(data, stacks=None):
+def dump(data, stacks=None, **metadata):
     stacks = stacks if stacks is not None else {"opaque": [list(data), [frame()]]}
-    return m.Dump({"data": data}, stacks, {"dump": "fixture/dump.json", "step": "2", "rank": "0"})
+    return m.Dump({"data": data, **metadata}, stacks, {"dump": "fixture/dump.json", "step": "2", "rank": "0"})
 
 
 class ReaderTests(unittest.TestCase):
+    def test_module_forward_backward_and_parameters_survive_renumbering(self):
+        def data(index, weight):
+            return {f'Module.layer.Linear.forward.{index}': {**operation(), 'parameters': {'weight': tensor(weight)}},
+                    f'Module.layer.Linear.backward.{index}': {'input': [tensor()], 'output': [tensor()]},
+                    'Tensor.mul.7.forward': operation()}
+        a, b = dump(data(2, 1), level='mix'), dump(data(90, 100), level='mix')
+        pairs = list(m.align(a, b))
+        self.assertEqual([p['status'] for p in pairs], ['matched'] * 3)
+        self.assertEqual(pairs[1]['right']['stack_api'], 'Module.layer.Linear.backward.90')
+        comparison = m.compare_records(pairs[0]['left'], pairs[0]['right'])
+        delta = next(c for c in comparison['changes'] if c['path'] == '/parameters/weight/Norm')
+        self.assertEqual(delta['absolute_difference'], 99)
+        boundary = m.boundary_evidence(pairs[0]['left'], pairs[0]['right'], comparison)
+        self.assertEqual(boundary['parameters']['largest_norm_absolute']['absolute_difference'], 99)
+        self.assertEqual(boundary['input']['statistics']['different'], 0)
+
+    def test_module_backward_uses_its_forward_stack_with_module_counter(self):
+        fwd, bwd = 'Module.layer.Linear.forward.7', 'Module.layer.Linear.backward.7'
+        d = dump({fwd: operation(recompute=True), bwd: {'input': [tensor()], 'output': [tensor()]}},
+                 {'x': [[fwd], [frame()]]})
+        item = d.inspect(bwd)
+        self.assertEqual(item['direction'], 'backward')
+        self.assertEqual(item['stack_api'], fwd)
+        self.assertTrue(item['is_recompute'])
+        self.assertEqual(item['counter_kind'], 'module_call')
+
+    def test_parameter_gradient_uses_own_stack_shape_and_trigger_occurrence(self):
+        a = dump({'Module.layer.Linear.parameters_grad.2': {'weight': [tensor(1)], 'bias': [tensor(2)]}})
+        b = dump({'Module.layer.Linear.parameters_grad.90': {'weight': [tensor(1e8)], 'bias': [tensor(2)]}})
+        pair = next(m.align(a, b))
+        self.assertEqual(pair['status'], 'matched')
+        self.assertEqual(pair['left']['direction'], 'parameters_grad')
+        self.assertEqual(pair['left']['counter_kind'], 'grad_fn_trigger')
+        result = m.compare_records(pair['left'], pair['right'])
+        self.assertTrue(any(c['path'] == '/weight/0/Norm' for c in result['changes']))
+        boundary = m.boundary_evidence(pair['left'], pair['right'], result)
+        self.assertEqual(boundary['parameters_grad']['largest_norm_absolute']['absolute_difference'], 1e8-1)
+        self.assertEqual(boundary['input']['paired_ports'], 0)
+
+    def test_parameter_gradient_never_borrows_same_counter_forward_stack(self):
+        fwd, grad = 'Module.layer.Linear.forward.0', 'Module.layer.Linear.parameters_grad.0'
+        d = dump({fwd: operation(recompute=True), grad: {'weight': [tensor(1e8)]}},
+                 {'x': [[fwd], [frame()]]})
+        item = d.inspect(grad)
+        self.assertIsNone(item['stack_api'])
+        self.assertFalse(item['is_recompute'])
+        self.assertEqual(item['unmatched_reason'], 'missing_stack')
+        self.assertEqual(item['tensors'][0]['path'], '/weight/0')
+        self.assertEqual(item['tensors'][0]['statistics']['Norm'], 1e8)
+        self.assertEqual(list(m.align(d, d))[1]['status'], 'left_only')
+
+    def test_parameter_gradient_unequal_trigger_counts_remain_ambiguous(self):
+        a = dump({f'Module.layer.Linear.parameters_grad.{i}': {'weight': [tensor()]} for i in (0, 1)})
+        b = dump({'Module.layer.Linear.parameters_grad.90': {'weight': [tensor()]}})
+        pairs = list(m.align(a, b))
+        self.assertFalse(any(p['status'] == 'matched' for p in pairs))
+        self.assertEqual(pairs[0]['reason'], 'unequal_repeat_counts')
+
+    def test_nan_check_compares_flags_without_inventing_statistics(self):
+        def checked(flag):
+            op = operation()
+            for port in (op['input_args'][0], op['output'][0]):
+                for key in m.STATS:
+                    port.pop(key)
+            op['is_nan'] = flag
+            return dump({'Torch.sqrt.0.forward': op}, task='nan_check', level='L1', framework='pytorch')
+        for left, right, expected in ((1, 0, 'different'), (1, 1, 'reported_anomaly'), (0, 0, 'equal')):
+            with self.subTest(left=left, right=right):
+                pair = next(m.align(checked(left), checked(right)))
+                result = m.compare_records(pair['left'], pair['right'])
+                self.assertEqual(result['nan_check']['status'], expected)
+                self.assertEqual(result['compared_statistic_fields'], 0)
+                changes = [c for c in result['changes'] if c['path'] == '/is_nan']
+                self.assertEqual(bool(changes), expected != 'equal')
+        inspected = checked(1).inspect('Torch.sqrt.0.forward')
+        self.assertEqual(inspected['source']['task'], 'nan_check')
+        self.assertEqual(inspected['nan_check'], {'status': 'reported', 'is_nan': 1})
+
+    def test_nan_check_missing_and_invalid_flags_are_unavailable(self):
+        for flag in (None, 2, '1', True):
+            with self.subTest(flag=flag):
+                op = operation()
+                if flag is not None:
+                    op['is_nan'] = flag
+                a = dump({'Torch.sqrt.0.forward': op}, task='nan_check')
+                b = dump({'Torch.sqrt.0.forward': {**operation(), 'is_nan': 0}}, task='nan_check')
+                result = m.compare_records(a.records[0], b.records[0])
+                self.assertEqual(result['nan_check']['status'], 'unavailable')
+                self.assertEqual(next(c for c in result['changes'] if c['path'] == '/is_nan')['status'], 'unavailable')
+
     def test_execution_order_not_numeric_api_order_and_stack_ids_are_opaque(self):
         data = {"Functional.linear.10.forward": operation(), "Functional.linear.2.forward": operation(recompute=True),
                 "Functional.linear.10.backward": {"input": [tensor()], "output": [tensor()]}}
@@ -178,6 +268,108 @@ class SourceTests(unittest.TestCase):
         (folder/'stack.json').write_text(json.dumps({'999': [list(data), [frame()]]}), encoding='utf-8')
         return folder
 
+    def test_nan_check_scan_and_cached_query_keep_first_anomaly_and_task(self):
+        api = 'Torch.sqrt.0.forward'
+        for side, flag in (('left', 1), ('right', 0)):
+            folder = self.write_rank(side, 0)
+            op = operation()
+            for port in (op['input_args'][0], op['output'][0]):
+                for key in m.STATS:
+                    port.pop(key)
+            op['is_nan'] = flag
+            payload = {'task': 'nan_check', 'level': 'L1', 'framework': 'pytorch', 'data': {api: op}}
+            (folder/'dump.json').write_text(json.dumps(payload), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [[api], [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            result = m.scan(a, b, self.root/'out')
+        rank = result['ranks'][0]
+        self.assertEqual(rank['nan_check']['left']['anomaly_records'], 1)
+        self.assertEqual(rank['nan_check']['right']['anomaly_records'], 0)
+        self.assertEqual(rank['nan_check']['left']['first_reported_anomaly']['api'], api)
+        first = rank['first_differences']['forward']
+        self.assertEqual(first['examples'][0]['path'], '/is_nan')
+        self.assertEqual(first['compared_statistic_fields'], 0)
+        self.assertEqual(first['changed_fields'], 1)
+        with patch.object(m, 'Source', side_effect=AssertionError('query must not reopen sources')):
+            row = m.query_scan(self.root/'out')['ranks'][0]['rows'][0]
+        self.assertEqual(row['nan_check']['status'], 'different')
+        self.assertEqual(row['left']['nan_check']['is_nan'], 1)
+        self.assertEqual(row['left']['task'], 'nan_check')
+        self.assertEqual(row['right']['level'], 'L1')
+        run = subprocess.run([sys.executable, m.__file__, 'compare', '--left', str(self.root/'left'),
+            '--right', str(self.root/'right'), '--rank', '0', '--api', api], capture_output=True, encoding='utf-8', check=True)
+        self.assertEqual(json.loads(run.stdout)['comparison']['nan_check']['status'], 'different')
+
+    def test_nan_check_anomaly_retained_without_shapes_stack_or_peer_rank(self):
+        folder = self.write_rank('left', 7)
+        self.write_rank('left', 0)
+        self.write_rank('right', 0)
+        api = 'Torch.sqrt.1.forward'
+        (folder/'dump.json').write_text(json.dumps({'task': 'nan_check', 'data': {api: {'is_nan': 1}}}), encoding='utf-8')
+        (folder/'stack.json').write_text('{}', encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            result = m.scan(a, b, self.root/'out')
+        seven = next(r for r in result['ranks'] if r['rank'] == '7')
+        self.assertEqual(seven['nan_check']['left']['first_reported_anomaly']['api'], api)
+        row = m.query_scan(self.root/'out', rank='7')['ranks'][0]['rows'][0]
+        self.assertEqual(row['reason'], 'peer_rank_missing')
+        self.assertEqual(row['left']['nan_check']['is_nan'], 1)
+
+    def test_nan_check_missing_flags_are_reported_in_summary_not_as_equal(self):
+        api = 'Torch.sqrt.0.forward'
+        for side in ('left', 'right'):
+            folder = self.write_rank(side, 0)
+            op = operation()
+            for port in (op['input_args'][0], op['output'][0]):
+                for key in m.STATS:
+                    port.pop(key)
+            (folder/'dump.json').write_text(json.dumps({'task': 'nan_check', 'data': {api: op}}), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [[api], [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            result = m.scan(a, b, self.root/'out')
+        rank = result['ranks'][0]
+        self.assertEqual(rank['first_differences'], {})
+        self.assertEqual([rank['nan_check'][side]['unavailable_records'] for side in ('left', 'right')], [1, 1])
+        row = m.query_scan(self.root/'out')['ranks'][0]['rows'][0]
+        self.assertEqual(row['nan_check']['status'], 'unavailable')
+        self.assertEqual(row['unavailable_fields'], 9)
+
+    def test_nan_check_scan_retains_anomaly_present_on_both_sides(self):
+        api = 'Torch.sqrt.0.forward'
+        for side in ('left', 'right'):
+            folder = self.write_rank(side, 0)
+            (folder/'dump.json').write_text(json.dumps({'task': 'nan_check', 'data': {api: {**operation(), 'is_nan': 1}}}), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [[api], [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            result = m.scan(a, b, self.root/'out')
+        rank = result['ranks'][0]
+        self.assertEqual(rank['first_differences']['forward']['nan_check']['status'], 'reported_anomaly')
+        self.assertEqual([rank['nan_check'][side]['anomaly_records'] for side in ('left', 'right')], [1, 1])
+
+    def test_mix_scan_and_query_preserve_parameter_gradient_phase(self):
+        for side, index, norm in (('left', 2, 1e8), ('right', 90, 1)):
+            folder = self.write_rank(side, 0)
+            data = {f'Module.layer.Linear.forward.{index}': {**operation(), 'parameters': {'weight': tensor(norm)}},
+                    f'Module.layer.Linear.backward.{index}': {'input': [tensor()], 'output': [tensor()]},
+                    f'Module.layer.Linear.parameters_grad.{index+5}': {'weight': [tensor(norm)]},
+                    'Tensor.mul.7.forward': operation()}
+            (folder/'dump.json').write_text(json.dumps({'task': 'statistics', 'level': 'mix', 'data': data}), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [list(data), [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            result = m.scan(a, b, self.root/'out')
+        rank = result['ranks'][0]
+        self.assertEqual(rank['counts'], {'matched': 4})
+        self.assertEqual(rank['first_differences']['parameters_grad']['examples'][0]['path'], '/weight/0/Norm')
+        self.assertEqual(rank['largest_norm_differences']['parameters_grad'][0]['absolute_difference'], 1e8-1)
+        run = subprocess.run([sys.executable, m.__file__, 'query', '--scan', str(self.root/'out'),
+            '--phase', 'parameters_grad'], capture_output=True, encoding='utf-8', check=True)
+        queried = json.loads(run.stdout)['ranks'][0]
+        self.assertEqual(queried['match_count'], 1)
+        row = queried['rows'][0]
+        self.assertEqual(row['left']['counter_kind'], 'grad_fn_trigger')
+        self.assertEqual(row['right']['api'], 'Module.layer.Linear.parameters_grad.95')
+        self.assertEqual(row['boundary_evidence']['parameters_grad']['largest_norm_absolute']['absolute_difference'], 1e8-1)
+
     def test_query_pages_each_rank_without_source_access_and_retains_empty_ranks(self):
         for side in ('left', 'right'):
             for rank in (0, 7):
@@ -215,16 +407,90 @@ class SourceTests(unittest.TestCase):
         rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
         for row in rows:
             row.pop('boundary_evidence', None)
+            row.pop('nan_check', None)
+            for side in ('left', 'right'):
+                if row.get(side):
+                    for field in ('task', 'level', 'framework', 'nan_check', 'counter', 'counter_kind'):
+                        row[side].pop(field, None)
         path.write_text(''.join(json.dumps(r)+'\n' for r in rows), encoding='utf-8')
+        summary_path = self.root/'out/summary.json'
+        summary = json.loads(summary_path.read_text(encoding='utf-8'))
+        for item in summary['ranks']:
+            item.pop('nan_check', None)
+            for side in ('left', 'right'):
+                if isinstance(item.get(side), dict):
+                    for field in ('task', 'level', 'framework'):
+                        item[side].pop(field, None)
+        summary_path.write_text(json.dumps(summary), encoding='utf-8')
         result = m.query_scan(self.root/'out')
         self.assertFalse(result['scan_coverage']['coverage_complete'])
         self.assertEqual(result['ranks'][0]['matched_rows_without_boundary_evidence'], 1)
+        self.assertIsNone(result['ranks'][0]['nan_check'])
+        self.assertNotIn('nan_check', result['ranks'][0]['rows'][0]['left'])
         self.assertEqual(result['ranks'][1]['rows'][0]['reason'], 'peer_rank_missing')
         with self.assertRaises(ValueError):
             m.query_scan(self.root/'out', rank='99')
         for options in ({'limit': 0}, {'offset': -1}):
             with self.assertRaises(ValueError):
                 m.query_scan(self.root/'out', **options)
+
+    def test_difference_focus_folds_equal_summaries_and_retains_small_changes_and_missing_rank(self):
+        for side in ('left', 'right'):
+            self.write_rank(side, 0)
+            self.write_rank(side, 7, norm=1.00000001 if side == 'left' else 1)
+        self.write_rank('left', 9)
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        path = self.root/'out/alignment.jsonl'
+        before = path.read_bytes()
+        with patch.object(m, 'Source', side_effect=AssertionError('focus must not reopen sources')):
+            result = m.query_scan(self.root/'out', focus='differences')
+        self.assertEqual([r['rank'] for r in result['ranks']], ['0', '7', '9'])
+        self.assertEqual([r['match_count'] for r in result['ranks']], [0, 1, 1])
+        self.assertEqual([r['folded_equal_summaries'] for r in result['ranks']], [1, 0, 0])
+        self.assertEqual([r['matches_before_focus'] for r in result['ranks']], [1, 1, 1])
+        self.assertEqual(result['ranks'][2]['rows'][0]['reason'], 'peer_rank_missing')
+        self.assertEqual(m.query_scan(self.root/'out')['ranks'][0]['match_count'], 1)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_difference_focus_keeps_unknown_flags_metadata_and_legacy_rows(self):
+        for side in ('left', 'right'):
+            folder = self.write_rank(side, 0)
+            data = {'Tensor.mul.7.forward': operation(), 'Tensor.mul.8.forward': operation(),
+                    'Tensor.mul.9.forward': operation(dtype='torch.float16' if side == 'left' else 'torch.float32'),
+                    'Tensor.mul.10.forward': {**operation(), 'is_nan': 1}}
+            (folder/'dump.json').write_text(json.dumps({'data': data}), encoding='utf-8')
+            (folder/'stack.json').write_text(json.dumps({'g': [list(data), [frame()]]}), encoding='utf-8')
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        path = self.root/'out/alignment.jsonl'
+        rows = [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines()]
+        rows[0].pop('boundary_evidence')
+        rows[1]['unavailable_fields'] = 1
+        path.write_text(''.join(json.dumps(row)+'\n' for row in rows), encoding='utf-8')
+        result = m.query_scan(self.root/'out', focus='differences', limit=2)
+        group = result['ranks'][0]
+        self.assertEqual(group['match_count'], 4)
+        self.assertEqual(group['folded_equal_summaries'], 0)
+        self.assertEqual(group['matched_rows_without_boundary_evidence'], 1)
+        self.assertEqual(group['next_offset'], 2)
+        second = m.query_scan(self.root/'out', focus='differences', limit=2, offset=2)
+        self.assertEqual(second['ranks'][0]['rows'][0]['left']['api'], 'Tensor.mul.9.forward')
+        self.assertEqual(second['ranks'][0]['rows'][1]['nan_check']['status'], 'reported_anomaly')
+
+    def test_difference_focus_cli_and_cache_integrity_still_apply(self):
+        for side in ('left', 'right'):
+            for rank in (0, 7):
+                self.write_rank(side, rank)
+        with m.Source(self.root/'left') as a, m.Source(self.root/'right') as b:
+            m.scan(a, b, self.root/'out')
+        run = subprocess.run([sys.executable, m.__file__, 'query', '--scan', str(self.root/'out'),
+            '--focus', 'differences'], capture_output=True, encoding='utf-8', check=True)
+        self.assertEqual([r['folded_equal_summaries'] for r in json.loads(run.stdout)['ranks']], [1, 1])
+        path = self.root/'out/alignment.jsonl'
+        path.write_text(path.read_text(encoding='utf-8').splitlines()[0]+'\n', encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'incomplete or inconsistent'):
+            m.query_scan(self.root/'out', rank='0', focus='differences')
 
     def test_query_cli_matches_right_api_and_preserves_backward_role_warning(self):
         for side, index in (('left', 2), ('right', 90)):

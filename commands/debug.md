@@ -1,5 +1,5 @@
 ---
-description: "Start precision diagnosis or show debug-agent status, evidence, acceptance and recovery; configure session reminders."
+description: "Diagnose AI training and inference errors, hangs, and numerical or state anomalies; show status, evidence and recovery or configure session reminders."
 argument-hint: "[status|evidence|again|done-check|resume|on|off|help|问题描述]"
 ---
 

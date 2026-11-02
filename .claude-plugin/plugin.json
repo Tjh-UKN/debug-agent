@@ -1,16 +1,16 @@
 {
   "name": "debug-agent",
-  "version": "0.8.0",
-  "description": "Root-cause diagnosis for AI correctness issues with on-demand evidence tools.",
+  "version": "0.9.1",
+  "description": "Root-cause diagnosis for AI training and inference errors, hangs, and numerical or state anomalies.",
   "author": {
     "name": "Tjh-UKN",
     "url": "https://github.com/tjh-ukn"
   },
   "repository": "https://github.com/tjh-ukn/debug-agent",
   "keywords": [
-    "precision",
+    "ai-training",
     "debugging",
-    "hypothesis",
-    "experiments"
+    "root-cause",
+    "numerical-errors"
   ]
 }

@@ -1,0 +1,10 @@
+{
+  "question": "同一输入和状态下，局部模块是否出现非有限输出？",
+  "context": {"run_id": "replay-42", "window_id": "step8/rank0"},
+  "preconditions": ["same_input", "same_state"],
+  "rules": [
+    {"id": "bad_output", "when": {"output_nonfinite": true, "boundary_complete": true}, "outcome": "answered", "conclusion": "本次有效局部重放出现非有限输出"}
+  ],
+  "stop_target": "collection",
+  "max_events": 20
+}

@@ -11,7 +11,6 @@ import zipfile
 
 import case
 from materials import inventory
-from panel import render
 from recovery import snapshot
 
 
@@ -116,6 +115,37 @@ class MechanismTests(unittest.TestCase):
         case.execute(self.directory, "close", self.closure("E3"))
         self.assertEqual(self.state()["status"], "closed")
 
+    def test_changed_premise_marks_tasks_and_focus_without_rewriting_observations(self):
+        original = self.put("evidence", self.evidence())
+        self.put("evidence", self.evidence("E2"))
+        parent = self.put("hypothesis", self.hypothesis())
+        self.put("hypothesis", self.hypothesis("H2", "E2", parents=["H1"]))
+        self.put("hypothesis", self.hypothesis("H3", "E2", parents=["H2"]))
+        search_child = self.put("hypothesis", self.hypothesis("H_SEARCH", "E2", investigates="H1",
+                                                            investigation_question="来源？"))
+        task = self.put("task", {**self.task(), "hypotheses": ["H3"]})
+        task = self.put("task", {**task, "status": "running", "run": {"job_id": "already-finished"}})
+        task = case.execute(self.directory, "submit", {"task_id": "T1", "rev": task["rev"], "result": {
+            "summary": "旧前提下的结果", "limitations": "仅局部", "outcome": "supports", "evidence": ["E2"]}})["record"]
+        accepted = case.execute(self.directory, "accept", {"task_id": "T1", "rev": task["rev"],
+                                                            "reason": "旧验收"})["record"]
+        self.put("checkpoint", {"id": "current", "rev": 0, "summary": "继续调查 H3",
+                                "next_action": "沿 H3 继续", "reason": "旧判断", "environment": "合成",
+                                "focus_hypotheses": ["H3"]})
+        self.put("hypothesis", {**parent, "status": "ruled_out"})
+        state = self.state()
+        self.assertEqual(state["hypothesis"]["H1"]["status"], "ruled_out")
+        for hid in ("H2", "H3"):
+            self.assertEqual(state["hypothesis"][hid]["status"], "unresolved")
+            self.assertIn("needs_review", state["hypothesis"][hid])
+        self.assertEqual(state["hypothesis"]["H_SEARCH"], search_child)
+        self.assertEqual(state["evidence"]["E1"], original)
+        self.assertEqual(state["task"]["T1"]["status"], "submitted")
+        self.assertEqual(state["task"]["T1"]["result"], accepted["result"])
+        self.assertEqual(state["task"]["T1"]["run"], accepted["run"])
+        self.assertIn("needs_review", state["task"]["T1"])
+        self.assertIn("needs_review", state["checkpoint"]["current"])
+
     def test_dependent_task_requires_reacceptance_without_rerun(self):
         self.put("evidence", self.evidence())
         self.put("hypothesis", self.hypothesis())
@@ -164,7 +194,7 @@ class MechanismTests(unittest.TestCase):
         self.put("hypothesis", self.hypothesis(status="unresolved", decision_review=None))
         case.execute(self.directory, "close", self.closure(outcome="narrowed", decision_review=None))
 
-    def test_correction_updates_scenario_and_recovery_and_evidence_display(self):
+    def test_correction_updates_scenario_and_recovery(self):
         self.put("evidence", self.evidence())
         self.put("scenario", {"id": "S1", "rev": 0, "description": "局部场景", "changes": "减少分区", "cost": "低",
                               "reason": "原判定保留", "reproduction": "retained", "evidence": ["E1"]})
@@ -175,7 +205,6 @@ class MechanismTests(unittest.TestCase):
         self.assertEqual(state["scenario"]["S1"]["reproduction"], "uncertain")
         self.assertTrue(state["checkpoint"]["current"]["needs_review"])
         self.assertIn("E1", snapshot(state)["inactive_evidence"])
-        self.assertIn("不可用于支持结论", render(state, "evidence"))
 
     def test_bad_correction_is_atomic_and_stale_writes_rejected(self):
         self.put("evidence", self.evidence())

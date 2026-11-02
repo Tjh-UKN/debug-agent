@@ -1,16 +1,13 @@
-"""Integration checks for UI, reminder hook and isolated installation."""
+"""Reminder, recovery and isolated installation/migration checks."""
 import importlib.util
 import json
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "debug-agent" / "scripts"))
+from tests import ROOT
 from control import read_config, set_mode
-from panel import render, table, width
 from recovery import discover, snapshot
 from case import execute
 from install import broken_references, check_installation, install
@@ -123,11 +120,6 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             read_config(self.config)
 
-    def test_empty_case_has_no_fake_progress(self):
-        output = render(state())
-        self.assertNotIn("█", output)
-        self.assertIn("尚无已登记任务", output)
-
     def test_install_check_is_read_only_for_missing_installation(self):
         before = list(self.home.rglob("*"))
         result = check_installation("codex", self.home)
@@ -159,42 +151,83 @@ class IntegrationTests(unittest.TestCase):
     def test_source_routes_remain_installable(self):
         self.assertEqual(broken_references(ROOT / "skills" / "debug-agent"), [])
 
-    def test_progress_is_from_tasks_not_hypotheses(self):
-        data = state()
-        data["task"] = {"T1": {"id": "T1", "question": "缩减", "status": "done"},
-                        "T2": {"id": "T2", "question": "对照", "status": "running"}}
-        data["hypothesis"] = {"H1": {"id": "H1", "claim": "候选", "status": "open"}}
-        output = render(data)
-        self.assertIn("1/2", output)
-        self.assertIn("待核查", output)
-        self.assertIn("非定位完成度", output)
+    def test_runtime_installation_excludes_tests_and_retired_modules(self):
+        destination, _ = install("codex", self.home)
+        self.assertEqual(list(destination.rglob("test_*.py")), [])
+        for relative in installer.RETIRED_FILES:
+            self.assertFalse((destination / relative).exists())
+        for name in ("diagnosis.py", "msprobe.py", "case.py", "recovery.py", "trace.py"):
+            self.assertTrue((destination / "scripts" / name).is_file())
 
-    def test_blocked_closure_never_reported_as_success(self):
-        data = state()
-        data.update(status="closed", closure={"outcome": "blocked", "conclusion": "缺少环境", "scope": "局部", "limitations": "待续"})
-        output = render(data, "done")
-        self.assertIn("受阻待续", output)
-        self.assertNotIn("根因已确认", output)
-        self.assertNotIn("修复已验证", output)
+    def test_retired_file_check_is_read_only_and_update_backs_up_exact_paths(self):
+        destination, _ = install("codex", self.home)
+        legacy = installer.RETIRED_FILES | installer.LEGACY_TEST_FILES
+        for relative in legacy:
+            path = destination / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"previous managed file: {relative}", encoding="utf-8")
+        extra = destination / "scripts/test_custom.py"
+        extra.write_text("user-owned extension", encoding="utf-8")
+        case_data = self.home / ".debug-agent/example/state.json"
+        case_data.parent.mkdir(parents=True, exist_ok=True)
+        case_data.write_text('{"case":"must remain"}', encoding="utf-8")
+        before = {p.relative_to(destination): p.read_bytes() for p in destination.rglob("*") if p.is_file()}
+        checked = check_installation("codex", self.home)
+        self.assertFalse(checked["matches"])
+        self.assertEqual(set(checked["obsolete"]), {p.as_posix() for p in legacy})
+        with self.assertRaises(ValueError):
+            install("codex", self.home)
+        self.assertEqual(before, {p.relative_to(destination): p.read_bytes() for p in destination.rglob("*") if p.is_file()})
+        _, backup = install("codex", self.home, update=True)
+        for relative in legacy:
+            self.assertFalse((destination / relative).exists())
+            self.assertEqual((backup / relative).read_bytes(), before[relative])
+        self.assertEqual(extra.read_text(), "user-owned extension")
+        self.assertEqual(case_data.read_text(), '{"case":"must remain"}')
+        self.assertTrue(check_installation("codex", self.home)["matches"])
 
-    def test_small_scene_closure_keeps_scope_and_limits(self):
-        data = state()
-        data["closure"] = {"outcome": "root_cause", "route": "evidence_chain", "scope": "64 卡", "limitations": "4096 卡未验证", "conclusion": "原因已定位", "evidence": ["E1"]}
-        output = render(data, "done")
-        self.assertIn("根因已确认", output)
-        self.assertIn("64 卡", output)
-        self.assertIn("4096 卡未验证", output)
+    def test_failed_prune_restores_removed_files_and_prior_runtime(self):
+        destination, _ = install("codex", self.home)
+        (destination / "SKILL.md").write_bytes(b"old entry")
+        retired = sorted(installer.RETIRED_FILES)
+        for relative in retired:
+            path = destination / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"old managed content")
+        before = {p.relative_to(destination): p.read_bytes() for p in destination.rglob("*") if p.is_file()}
+        original = Path.unlink
+        failed = False
 
-    def test_card_preserves_full_critical_limits(self):
-        data = state()
-        limitations = "已有观察仅覆盖局部场景；" * 12 + "4096 卡未验证，不证明原场景已修复。"
-        data["closure"] = {"outcome": "root_cause", "scope": "64 卡", "limitations": limitations, "conclusion": "局部确认"}
-        self.assertIn(limitations, render(data, "done"))
+        def fail_once(path, *args, **kwargs):
+            nonlocal failed
+            if path == destination / retired[1] and not failed:
+                failed = True
+                raise OSError("simulated removal failure")
+            return original(path, *args, **kwargs)
 
-    def test_cjk_table_width_and_control_characters(self):
-        output = table([("状态", "中文边界 e\u0301"), ("数据", "x\n\x1by")], (6, 16))
-        self.assertEqual(len({width(line) for line in output.splitlines()}), 1)
-        self.assertNotIn("\x1b", output)
+        with patch.object(Path, "unlink", fail_once):
+            with self.assertRaises(OSError):
+                install("codex", self.home, update=True)
+        after = {p.relative_to(destination): p.read_bytes() for p in destination.rglob("*") if p.is_file()}
+        self.assertEqual(before, after)
+
+    def test_alias_update_does_not_prune_neighboring_command_files(self):
+        destination, _ = install("claude-alias", self.home)
+        extra = destination / "scripts/panel.py"
+        extra.parent.mkdir()
+        extra.write_bytes(b"unrelated command file")
+        install("claude-alias", self.home, update=True)
+        self.assertEqual(extra.read_bytes(), b"unrelated command file")
+
+    def test_retired_path_with_unexpected_directory_is_preserved(self):
+        destination, _ = install("pi", self.home)
+        unexpected = destination / "scripts/panel.py"
+        unexpected.mkdir()
+        marker = unexpected / "user-data.txt"
+        marker.write_bytes(b"do not delete")
+        with self.assertRaisesRegex(ValueError, "not a regular file"):
+            install("pi", self.home, update=True)
+        self.assertEqual(marker.read_bytes(), b"do not delete")
 
     def test_codex_install_updates_with_backup_only_when_requested(self):
         destination, backup = install("codex", self.home)

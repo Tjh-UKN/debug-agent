@@ -1,15 +1,15 @@
 {
   "name": "debug-agent",
-  "version": "0.8.0",
-  "description": "Root-cause diagnosis for AI correctness issues with on-demand evidence tools.",
+  "version": "0.9.1",
+  "description": "Root-cause diagnosis for AI training and inference errors, hangs, and numerical or state anomalies.",
   "author": {
     "name": "Tjh-UKN"
   },
   "skills": "./skills/",
   "interface": {
     "displayName": "Debug Agent",
-    "shortDescription": "Find causes of AI correctness issues with verifiable evidence.",
-    "longDescription": "Combine code and data analysis, collect only missing evidence, and stop at a supported conclusion. Optional case recovery preserves prior work.",
+    "shortDescription": "Find causes of AI errors, hangs, and numerical/state anomalies.",
+    "longDescription": "Diagnose AI training and inference failures through code and evidence analysis. Consult relevant diagnostic guidance and evidence tools as needed; optional case recovery preserves prior work.",
     "developerName": "Tjh-UKN",
     "category": "Productivity",
     "capabilities": [
@@ -17,7 +17,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Use $debug-agent to diagnose this precision issue."
+      "Use $debug-agent to find the cause of this AI training or inference problem."
     ]
   }
 }

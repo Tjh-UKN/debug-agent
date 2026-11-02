@@ -12,7 +12,7 @@ Every function takes a state dict and returns plain data. Nothing here writes
 state, launches work or creates tasks: branch health is derived on each call
 and never persisted, so history keeps its original recorded statuses.
 """
-from case import inactive_evidence
+from case import inactive_evidence, logical_blocker
 
 COMPLETENESS = ("projection covers registered references only; unregistered prose "
                 "premises are invisible and reported as missing, never guessed")
@@ -63,8 +63,8 @@ def branch_health(state, hid):
     """Derived search projection: active, pruned or stale, plus the blocking node.
 
     Recorded statuses are never modified. A branch is pruned when it or an
-    investigation ancestor was ruled out; stale when a logical prerequisite
-    upstream failed (needs_review/unresolved). Siblings are never affected.
+    investigation ancestor was ruled out; stale when a necessary logical
+    premise failed. Neither relation is inferred from the other.
     """
     hypotheses = state.get("hypothesis", {})
     current = hid
@@ -76,6 +76,9 @@ def branch_health(state, hid):
             return {"state": "pruned", "blocked_by": current}
         if node.get("needs_review") or node["status"] == "unresolved":
             return {"state": "stale", "blocked_by": current}
+        blocker = logical_blocker(state, current)
+        if blocker:
+            return blocker
         current = node.get("investigates")
     return {"state": "active", "blocked_by": None}
 

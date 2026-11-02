@@ -1,0 +1,11 @@
+{"event": "forward", "job": "fixture", "loss": 2.0, "rank": 0, "step": 41}
+{"event": "submitted", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 0, "seq": 0, "step": 41}
+{"event": "forward", "job": "fixture", "loss": 2.0, "rank": 0, "step": 42}
+{"event": "submitted", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 0, "seq": 1, "step": 42}
+{"event": "forward", "job": "fixture", "loss": 2.0, "rank": 1, "step": 41}
+{"event": "submitted", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 1, "seq": 0, "step": 41}
+{"event": "forward", "job": "fixture", "loss": "NaN", "rank": 1, "step": 42}
+{"event": "continue", "job": "fixture", "rank": 1, "step": 42}
+{"event": "completed", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 0, "seq": 0, "step": 41}
+{"event": "timeout", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 0, "seq": 1, "step": 42}
+{"event": "completed", "group": "dp", "job": "fixture", "op": "all_reduce", "rank": 1, "seq": 0, "step": 41}

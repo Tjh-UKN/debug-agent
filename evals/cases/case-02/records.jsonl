@@ -1,0 +1,2 @@
+{"grad_norm": 3.0, "job": "fixture", "rank": 0, "reported_loss": 2.0, "step": 41, "token_losses": [2.0, 2.0, 2.0, 2.0], "valid_mask": [1, 1, 1, 1]}
+{"grad_norm": 3.0, "job": "fixture", "rank": 0, "reported_loss": 8.0, "step": 42, "token_losses": [2.0, 2.0, 2.0, 2.0], "valid_mask": [1, 0, 0, 0]}

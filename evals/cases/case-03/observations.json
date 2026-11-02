@@ -1,0 +1,17 @@
+{
+  "coverage": "partial",
+  "nodes": [
+    {"id": "upstream_state", "verdict": "unknown", "source": "capture:state-missing"},
+    {"id": "input_summary", "verdict": "normal", "source": "capture:finite-summary"},
+    {"id": "branch_a", "verdict": "abnormal", "timestamp": 100, "source": "capture:explicit-output-check-a"},
+    {"id": "branch_b", "verdict": "abnormal", "timestamp": 5, "source": "capture:explicit-output-check-b"},
+    {"id": "loss", "verdict": "abnormal", "timestamp": 200, "source": "capture:loss-check"}
+  ],
+  "edges": [
+    {"from": "upstream_state", "to": "input_summary", "kind": "data", "basis": "observed", "source": "capture:object-use-1"},
+    {"from": "input_summary", "to": "branch_a", "kind": "data", "basis": "observed", "source": "capture:object-use-2"},
+    {"from": "branch_a", "to": "loss", "kind": "data", "basis": "observed", "source": "capture:object-use-3"},
+    {"from": "branch_b", "to": "loss", "kind": "data", "basis": "observed", "source": "capture:object-use-4"},
+    {"from": "branch_a", "to": "branch_b", "kind": "control", "basis": "uncertain", "source": "capture:unresolved-link"}
+  ]
+}

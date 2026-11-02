@@ -15,7 +15,7 @@ import tarfile
 import zipfile
 
 STATS = ("Norm", "Max", "Min", "Mean")
-FIELDS = ("input_args", "input_kwargs", "input", "output")
+FIELDS = ("input_args", "input_kwargs", "input", "output", "parameters")
 FRAME = re.compile(r"^File (.*?), line (\d+), in ([^,\n]+),?\s*(.*)$", re.S)
 
 
@@ -223,25 +223,51 @@ def port_layout(value):
     return None if value is None else type(value).__name__
 
 
+def record_identity(api):
+    module = re.fullmatch(r"(Module\..+)\.(forward|backward|parameters_grad)\.(\d+)", api)
+    if module:
+        family, direction, counter = module.groups()
+        forward = f"{family}.forward.{counter}" if direction == "backward" else None
+        return family, direction, forward, counter, "grad_fn_trigger" if direction == "parameters_grad" else "module_call"
+    operation = re.fullmatch(r"(.+)\.(\d+)\.(forward|backward)", api)
+    if operation:
+        family, counter, direction = operation.groups()
+        return family, direction, f"{family}.{counter}.forward" if direction == "backward" else None, counter, "api_call"
+    return api, api.rsplit(".", 1)[-1], None, None, "unknown"
+
+
+def record_fields(raw, direction):
+    # parameters_grad maps parameter names directly to recorded gradients. Its
+    # counter is a grad_fn trigger count and cannot identify a forward call.
+    return raw if direction == "parameters_grad" else {k: raw[k] for k in FIELDS if k in raw}
+
+
+def nan_check_evidence(raw, task):
+    if "is_nan" not in raw:
+        return {"status": "unavailable", "is_nan": None} if task == "nan_check" else None
+    value = raw["is_nan"]
+    return {"status": "reported" if type(value) is int and value in (0, 1) else "invalid", "is_nan": value}
+
+
 class Dump:
     def __init__(self, payload, stacks, source, code_root=None):
         self.data = payload.get("data")
         if not isinstance(self.data, dict) or not all(isinstance(v, dict) for v in self.data.values()):
             raise ValueError("dump.data must map API names to records")
-        self.source, self.code_root = source, code_root
+        self.source = {**source, **{k: payload.get(k) for k in ("task", "level", "framework")}}
+        self.code_root = code_root
         self.stack = stack_index(stacks)
         self.keys = list(self.data)  # Guaranteed execution order; never sort API IDs.
         self.records = []
         self.by_name = {}
         self.mesh_ranks = set()
         for position, (api, raw) in enumerate(self.data.items()):
-            direction = api.rsplit(".", 1)[-1]
-            family = re.sub(r"\.\d+\.(forward|backward)$", "", api)
-            forward = api[:-len("backward")] + "forward" if direction == "backward" else api
+            family, direction, forward, counter, counter_kind = record_identity(api)
             call = self.data.get(forward, raw)
             stack_api = api if api in self.stack else forward if forward in self.stack else None
             entry = self.stack.get(stack_api, {})
-            tensors = [t for field in FIELDS if field in raw for t in tensor_fields(raw[field], "/" + field)]
+            fields = record_fields(raw, direction)
+            tensors = list(tensor_fields(fields))
             for tensor in tensors:
                 def ranks(mesh):
                     if type(mesh) is int:
@@ -251,11 +277,11 @@ class Dump:
                             ranks(item)
                 ranks(tensor["distribution"].get("device_mesh"))
             call_shapes = [(t["path"], t["shape"], t["distribution"])
-                           for field in FIELDS if field in call for t in tensor_fields(call[field], "/" + field)]
+                           for t in tensor_fields(record_fields(call, direction))]
             call_shapes.sort(key=lambda t: t[0])
             gradient = next((t for t in tensors if t["path"].startswith("/input/")), None)
             reason = None
-            if direction not in {"forward", "backward"}:
+            if direction not in {"forward", "backward", "parameters_grad"}:
                 reason = "unknown_direction"
             elif not entry.get("frames"):
                 reason = "missing_stack"
@@ -266,10 +292,11 @@ class Dump:
                 [normalize_frame(f, code_root) for f in entry["frames"]], call_shapes,
                 [gradient["path"], gradient["shape"], gradient["distribution"]] if direction == "backward" else None], sort_keys=True)
             record = {"api": api, "position": position, "direction": direction, "is_recompute": recompute,
+                      "counter": counter, "counter_kind": counter_kind,
+                      "nan_check": nan_check_evidence(raw, self.source["task"]),
                       "stack_api": stack_api, "stack_group": entry.get("group"), "frames": entry.get("frames", []),
                       "tensors": tensors, "signature": signature, "unmatched_reason": reason,
-                      "port_layout": {k: port_layout(raw[k]) for k in FIELDS if k in raw},
-                      "scalars": dict(scalar_fields({k: raw[k] for k in FIELDS if k in raw}))}
+                      "port_layout": port_layout(fields), "scalars": dict(scalar_fields(fields))}
             self.records.append(record)
             self.by_name[api] = record
 
@@ -355,15 +382,43 @@ def compare_records(a, b):
         delta = difference(a["scalars"].get(path), b["scalars"].get(path))
         if delta:
             changes.append({"path": path, **delta})
+    nan_check = None
+    if a.get("nan_check") is not None or b.get("nan_check") is not None:
+        x, y = a.get("nan_check"), b.get("nan_check")
+        if not x or not y or x["status"] != "reported" or y["status"] != "reported":
+            state = "unavailable"
+        elif x["is_nan"] != y["is_nan"]:
+            state = "different"
+        else:
+            state = "reported_anomaly" if x["is_nan"] == 1 else "equal"
+        nan_check = {"status": state, "left": x, "right": y,
+                     "meaning": "Recorded API overflow status; is_nan=1 does not identify a tensor element or prove causality."}
+        if state != "equal":
+            changes.append({"path": "/is_nan", "status": state,
+                            "left": x["is_nan"] if x else None, "right": y["is_nan"] if y else None})
     return {"compared_statistic_fields": compared, "changes": changes,
-            "role_check_required": a["direction"] == "backward" and a["port_layout"] != b["port_layout"],
+            "nan_check": nan_check,
+            "role_check_required": a["direction"] in {"backward", "parameters_grad"} and a["port_layout"] != b["port_layout"],
             "meaning": "Statistics/metadata comparison only; matching summaries do not establish tensor equality or causality."}
 
 
 def reference(dump, record):
     return None if record is None else {"source": dump.source["dump"], "api": record["api"],
                                        "position": record["position"], "direction": record["direction"],
-                                       "is_recompute": record["is_recompute"], "stack_api": record["stack_api"]}
+                                       "is_recompute": record["is_recompute"], "stack_api": record["stack_api"],
+                                       "counter": record["counter"], "counter_kind": record["counter_kind"],
+                                       **{k: dump.source.get(k) for k in ("task", "level", "framework")},
+                                       "nan_check": record["nan_check"]}
+
+
+def port_role(path, direction):
+    if direction == "parameters_grad":
+        return "parameters_grad"
+    if path == "/output" or path.startswith("/output/"):
+        return "output"
+    if path == "/parameters" or path.startswith("/parameters/"):
+        return "parameters"
+    return "input"
 
 
 def boundary_evidence(a, b, comparison):
@@ -371,10 +426,10 @@ def boundary_evidence(a, b, comparison):
     groups = {name: {"paired_ports": 0, "incomparable_ports": 0, "unpaired_ports": 0,
                      "statistics": {k: 0 for k in ("equal", "different", "unavailable", "nonfinite")},
                      "largest_norm_absolute": None, "largest_norm_relative": None}
-              for name in ("input", "output")}
+              for name in ("input", "output", "parameters", "parameters_grad")}
     ports = [{t["path"]: t for t in r["tensors"]} for r in (a, b)]
     for path in ports[0].keys() | ports[1].keys():
-        group = groups["output" if path == "/output" or path.startswith("/output/") else "input"]
+        group = groups[port_role(path, a["direction"])]
         x, y = ports[0].get(path), ports[1].get(path)
         if x is None or y is None:
             group["unpaired_ports"] += 1
@@ -390,7 +445,7 @@ def boundary_evidence(a, b, comparison):
     for delta in comparison["changes"]:
         path = delta["path"]
         if path.endswith("/Norm") and "absolute_difference" in delta:
-            group = groups["output" if path.startswith("/output/") else "input"]
+            group = groups[port_role(path, a["direction"])]
             for name, score in (("largest_norm_absolute", "absolute_difference"),
                                 ("largest_norm_relative", "relative_to_right")):
                 if delta.get(score) is not None and (group[name] is None or delta[score] > group[name][score]):
@@ -401,10 +456,36 @@ def boundary_evidence(a, b, comparison):
             "metadata_changes_truncated": len(metadata) > 8}
 
 
-def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offset=0):
+def foldable_summary(row):
+    """Fold only explicitly compared, unchanged summaries; never infer normality."""
+    required = {"boundary_evidence", "changed_fields", "unavailable_fields", "compared_statistic_fields",
+                "role_check_required", "order_changed", "nan_check"}
+    if row.get("status") != "matched" or not required.issubset(row):
+        return False
+    if row["changed_fields"] or row["unavailable_fields"] or row["compared_statistic_fields"] <= 0:
+        return False
+    if row["role_check_required"] or row["order_changed"]:
+        return False
+    if row["nan_check"] is not None and row["nan_check"].get("status") != "equal":
+        return False
+    boundary = row["boundary_evidence"]
+    if boundary.get("metadata_change_count", 1):
+        return False
+    for name in ("input", "output", "parameters", "parameters_grad"):
+        group = boundary.get(name, {})
+        if any(group.get(key, 1) for key in ("unpaired_ports", "incomparable_ports")):
+            return False
+        if any(group.get("statistics", {}).get(key, 1) for key in ("different", "unavailable", "nonfinite")):
+            return False
+    return True
+
+
+def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offset=0, focus="all"):
     """Page cached evidence per rank without reopening original archives."""
     if limit < 1 or offset < 0:
         raise ValueError("limit must be positive and offset nonnegative")
+    if focus not in {"all", "differences"}:
+        raise ValueError("focus must be all or differences")
     folder = Path(folder).expanduser().resolve()
     summary = read_object((folder / "summary.json").read_bytes())
     expected_counts = {(r["step"], r["rank"]): sum(r["counts"].values()) for r in summary["ranks"]}
@@ -416,7 +497,9 @@ def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offse
         groups[(item["step"], item["rank"])] = {
             "step": item["step"], "rank": item["rank"], "match_count": 0, "status_counts": {},
             "rows": [], "matched_rows_without_boundary_evidence": 0,
-            "sources": {side: item.get(side) for side in ("left", "right")}}
+            "matches_before_focus": 0, "folded_equal_summaries": 0,
+            "sources": {side: item.get(side) for side in ("left", "right")},
+            "nan_check": item.get("nan_check")}
     if not groups:
         raise ValueError("requested step/rank is not present in the scan summary")
     total_rows = 0
@@ -434,6 +517,10 @@ def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offse
                 return fnmatchcase(ref["api"], api) and (phase is None or observed_phase == phase)
             if not any(selected(ref) for ref in refs):
                 continue
+            group["matches_before_focus"] += 1
+            if focus == "differences" and foldable_summary(row):
+                group["folded_equal_summaries"] += 1
+                continue
             index = group["match_count"]
             group["match_count"] += 1
             state = row["status"]
@@ -445,7 +532,7 @@ def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offse
         raise ValueError("alignment row counts disagree with summary; incomplete or inconsistent scan snapshot")
     for group in groups.values():
         group["next_offset"] = offset + len(group["rows"]) if offset + len(group["rows"]) < group["match_count"] else None
-    return {"scan": str(folder), "filters": {"api": api, "rank": rank, "step": step, "phase": phase},
+    return {"scan": str(folder), "filters": {"api": api, "rank": rank, "step": step, "phase": phase, "focus": focus},
             "pagination": {"limit_per_rank": limit, "offset_per_rank": offset},
             "alignment_rows_read": total_rows, "ranks": list(groups.values()),
             "scan_coverage": {k: summary.get(k) for k in
@@ -453,6 +540,7 @@ def query_scan(folder, api="*", rank=None, step=None, phase=None, limit=3, offse
             "meaning": "Cached statistics, not tensor equality or causality. Input slots may include weights or pre-write buffers. "
                        "Rows follow the scan's left order, with unmatched right rows appended; not data-flow edges. "
                        "Zero matches does not prove non-execution. Older scans lack boundary_evidence: use compare/inspect. "
+                       "Differences focus folds only explicitly unchanged compared summaries, not proven-normal nodes; query all to recover. "
                        "Original source freshness is not checked; retain the scan's source hashes as the checkpoint."}
 
 
@@ -472,7 +560,10 @@ def scan(left, right, output, left_root=None, right_root=None):
                     "largest_norm_differences": {}, "largest_relative_norm_differences": {},
                     "comparison": {"statistic_fields_compared": 0, "unavailable_fields": 0,
                         "records_without_statistic_comparison": 0, "role_check_required_records": 0,
-                        "order_changed_records": 0}}
+                        "order_changed_records": 0},
+                    "nan_check": {label: {"reported_records": 0, "unavailable_records": 0,
+                        "invalid_records": 0, "anomaly_records": 0, "first_reported_anomaly": None}
+                        for label in ("left", "right")}}
             summary["ranks"].append(item)
             dumps = [None, None]
             for side, source, code_root in ((0, left, left_root), (1, right, right_root)):
@@ -484,6 +575,16 @@ def scan(left, right, output, left_root=None, right_root=None):
                     dumps[side] = source.load(scope, code_root)
                     mesh[side][scope[0]].update(dumps[side].mesh_ranks)
                     item[label] = {**dumps[side].source, "records": len(dumps[side].records)}
+                    for record in dumps[side].records:
+                        observed = record["nan_check"]
+                        if observed is None:
+                            continue
+                        evidence = item["nan_check"][label]
+                        evidence[observed["status"] + "_records"] += 1
+                        if observed["status"] == "reported" and observed["is_nan"] == 1:
+                            evidence["anomaly_records"] += 1
+                            if evidence["first_reported_anomaly"] is None:
+                                evidence["first_reported_anomaly"] = reference(dumps[side], record)
                 except (ValueError, OSError, KeyError, TypeError) as exc:
                     item[label] = "read_error"
                     summary["errors"].append({"step": scope[0], "rank": scope[1], "side": label, "error": str(exc)})
@@ -518,6 +619,7 @@ def scan(left, right, output, left_root=None, right_root=None):
                                changed_fields=sum(c["status"] != "unavailable" for c in result["changes"]),
                                unavailable_fields=sum(c["status"] == "unavailable" for c in result["changes"]),
                                role_check_required=result["role_check_required"],
+                               nan_check=result["nan_check"],
                                order_changed=pair["right"]["position"] < prior_right)
                     prior_right = max(prior_right, pair["right"]["position"])
                     item["comparison"]["statistic_fields_compared"] += row["compared_statistic_fields"]
@@ -577,9 +679,11 @@ def main():
     query.add_argument("--api", default="*", help="glob against either side's API name; quote wildcards")
     query.add_argument("--rank", help="all scanned ranks by default")
     query.add_argument("--step", help="all scanned steps by default")
-    query.add_argument("--phase", choices=("forward", "backward", "recompute"))
+    query.add_argument("--phase", choices=("forward", "backward", "recompute", "parameters_grad"))
     query.add_argument("--limit", type=int, default=3, help="records per rank per page")
     query.add_argument("--offset", type=int, default=0, help="matching records to skip per rank")
+    query.add_argument("--focus", choices=("all", "differences"), default="all",
+                       help="fold unchanged compared summaries; retain unknown, unmatched and changed records")
     for command in ("scan", "compare"):
         child = commands.add_parser(command)
         child.add_argument("--left", required=True)
@@ -595,7 +699,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "query":
-            result = query_scan(args.scan, args.api, args.rank, args.step, args.phase, args.limit, args.offset)
+            result = query_scan(args.scan, args.api, args.rank, args.step, args.phase, args.limit, args.offset, args.focus)
         elif args.command == "inspect":
             with Source(args.data) as source:
                 result = source.load(select_scope(source, args.rank, args.step)).inspect(args.api)
@@ -607,6 +711,7 @@ def main():
                               "coverage_complete": summary["coverage_complete"], "errors": summary["errors"],
                               "rank_overview": [{"step": r["step"], "rank": r["rank"], "counts": r["counts"],
                                   "comparison": r["comparison"],
+                                  "nan_check": r["nan_check"],
                                   "norm_peaks_by_stage": {stage: top[0] for stage, top in r["largest_norm_differences"].items()}}
                                   for r in summary["ranks"][:64]],
                               "additional_rank_rows_in_summary": max(0, len(summary["ranks"]) - 64),

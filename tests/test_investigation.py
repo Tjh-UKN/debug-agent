@@ -1,4 +1,5 @@
 """Tests for investigation lineage, logical dependency separation and trace views."""
+import copy
 import json
 from pathlib import Path
 import subprocess
@@ -8,7 +9,6 @@ import unittest
 
 import case
 import investigation
-from panel import render
 from recovery import snapshot
 
 
@@ -143,6 +143,61 @@ class InvestigationTests(unittest.TestCase):
         self.assertEqual(state["hypothesis"]["H2"]["status"], "unresolved")
         self.assertEqual(investigation.logical_dependents(state, "H1"), ["H2"])
 
+    def test_parent_status_downgrade_withdraws_confirmed_dependent(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("evidence", self.evidence("E2"))
+        for status in ("open", "supported", "unresolved", "ruled_out"):
+            with self.subTest(status=status):
+                parent_id, child_id = "P_" + status, "H_" + status
+                parent = self.put("hypothesis", self.confirmed(parent_id, "E1"))
+                self.put("hypothesis", self.confirmed(child_id, "E2", parents=[parent_id]))
+                updated = self.put("hypothesis", {**parent, "status": status})
+                state = self.show()
+                self.assertEqual(updated["status"], status)
+                self.assertEqual(state["hypothesis"][child_id]["status"], "unresolved")
+                self.assertNotIn("decision_review", state["hypothesis"][child_id])
+                self.assertIn(child_id, snapshot(state)["investigation"]["stale"])
+                self.assertNotIn(child_id, [node["id"] for node in investigation.active_frontier(state)])
+
+    def test_changed_claim_or_prerequisite_withdraws_dependents(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("evidence", self.evidence("E2"))
+        parent = self.put("hypothesis", self.confirmed("H1", "E1"))
+        child = self.put("hypothesis", self.confirmed("H2", "E2", parents=["H1"]))
+        self.put("hypothesis", {**parent, "claim": "更正后的另一主张"})
+        self.assertEqual(self.show()["hypothesis"]["H1"]["status"], "confirmed")
+        self.assertEqual(self.show()["hypothesis"]["H2"]["status"], "unresolved")
+        child = self.put("hypothesis", {**self.show()["hypothesis"]["H2"],
+                                        "status": "confirmed", "decision_review": self.review("E2")})
+        self.put("hypothesis", self.confirmed("H3", "E2", parents=["H2"]))
+        self.put("hypothesis", self.confirmed("H_OTHER", "E1"))
+        self.put("hypothesis", {**child, "parents": ["H_OTHER"]})
+        self.assertEqual(self.show()["hypothesis"]["H2"]["status"], "confirmed")
+        self.assertEqual(self.show()["hypothesis"]["H3"]["status"], "unresolved")
+
+    def test_strengthening_and_editorial_changes_leave_dependents_intact(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("evidence", self.evidence("E2"))
+        parent = self.put("hypothesis", self.hypothesis("H1"))
+        child = self.put("hypothesis", self.confirmed("H2", "E2", parents=["H1"]))
+        parent = self.put("hypothesis", {**parent, "status": "supported", "evidence": ["E1"]})
+        self.assertEqual(self.show()["hypothesis"]["H2"], child)
+        parent = self.put("hypothesis", {**parent, "status": "confirmed", "decision_review": self.review()})
+        self.assertEqual(self.show()["hypothesis"]["H2"], child)
+        self.put("hypothesis", {**parent, "reason": "补充说明，主张和状态未改变"})
+        self.assertEqual(self.show()["hypothesis"]["H2"], child)
+
+    def test_logical_failure_is_stale_not_investigation_pruning(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("hypothesis", {**self.confirmed("H1"), "status": "ruled_out"})
+        self.put("hypothesis", self.hypothesis("H2", parents=["H1"]))
+        self.put("hypothesis", self.hypothesis("H3", investigates="H1", investigation_question="来源？"))
+        state = self.show()
+        self.assertEqual(investigation.branch_health(state, "H2"), {"state": "stale", "blocked_by": "H1"})
+        self.assertEqual(investigation.branch_health(state, "H3"), {"state": "pruned", "blocked_by": "H1"})
+        self.assertEqual(investigation.investigation_path(state, "H2"), ["H2"])
+        self.assertEqual(investigation.logical_dependencies(state, "H3"), [])
+
     # --- T7: path and why answer different questions ------------------------
     def test_why_walks_parents_and_evidence_not_investigation(self):
         self.put("evidence", self.evidence("E1"))
@@ -172,6 +227,52 @@ class InvestigationTests(unittest.TestCase):
         self.put("hypothesis", self.confirmed("H1", "E1", rev=1))
         case.execute(self.root, "close", dict(base, rev=self.show()["rev"], hypotheses=["H1"]))
         self.assertEqual(self.show()["closure"]["hypotheses"], ["H1"])
+
+    def test_saved_invalid_necessary_premise_blocks_successful_closure(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("evidence", self.evidence("E2"))
+        self.put("hypothesis", self.confirmed("H_PARENT", "E1"))
+        self.put("hypothesis", self.confirmed("H_MIDDLE", "E2", parents=["H_PARENT"]))
+        self.put("hypothesis", self.confirmed("H_ROOT", "E2", parents=["H_MIDDLE"]))
+        original = self.show()
+        # Existing snapshots may predate invalidation propagation. Keep the
+        # recorded root confirmed to exercise closure and recovery defensively.
+        for failure in ("open", "unresolved", "ruled_out", "needs_review", "missing", "missing_evidence"):
+            for outcome, route in (("root_cause", "evidence_chain"), ("fix_verified", "targeted_fix")):
+                with self.subTest(failure=failure, outcome=outcome):
+                    state = copy.deepcopy(original)
+                    if failure == "missing":
+                        del state["hypothesis"]["H_PARENT"]
+                    elif failure == "needs_review":
+                        state["hypothesis"]["H_PARENT"]["needs_review"] = "旧判断待审"
+                    elif failure == "missing_evidence":
+                        del state["evidence"]["E1"]
+                    else:
+                        state["hypothesis"]["H_PARENT"]["status"] = failure
+                    case.atomic_write(self.root / "state.json", state)
+                    before = (self.root / "state.json").read_bytes()
+                    closure = {"rev": state["rev"], "outcome": outcome, "route": route,
+                               "conclusion": "根因", "scope": "局部", "limitations": "合成",
+                               "hypotheses": ["H_ROOT"], "acceptance_check": "声称满足",
+                               "evidence": ["E2"], "decision_review": self.review("E2")}
+                    with self.assertRaisesRegex(ValueError, "unusable necessary premise"):
+                        case.execute(self.root, "close", closure)
+                    if failure != "open":
+                        self.assertNotEqual(investigation.branch_health(state, "H_ROOT")["state"], "active")
+                        self.assertNotIn("H_ROOT", [node["id"] for node in snapshot(state)["investigation"]["frontier"]])
+                    self.assertEqual(before, (self.root / "state.json").read_bytes())
+
+    def test_supported_necessary_premise_allows_successful_closure(self):
+        self.put("evidence", self.evidence("E1"))
+        self.put("evidence", self.evidence("E2"))
+        self.put("hypothesis", self.hypothesis("H_PARENT", status="supported", evidence=["E1"]))
+        self.put("hypothesis", self.confirmed("H_ROOT", "E2", parents=["H_PARENT"]))
+        case.execute(self.root, "close", {"rev": self.show()["rev"], "outcome": "root_cause",
+                                          "route": "evidence_chain", "conclusion": "根因", "scope": "局部",
+                                          "limitations": "合成", "hypotheses": ["H_ROOT"],
+                                          "acceptance_check": "满足", "evidence": ["E2"],
+                                          "decision_review": self.review("E2")})
+        self.assertEqual(self.show()["status"], "closed")
 
     def test_narrowed_and_legacy_routes_do_not_require_root(self):
         self.put("evidence", self.evidence("E1"))
@@ -318,32 +419,6 @@ class InvestigationTests(unittest.TestCase):
         failed = self.trace("path", "--hypothesis", "missing")
         self.assertEqual(failed.returncode, 2)
         self.assertIn("error", json.loads(failed.stderr))
-
-    # --- panel keeps the compact path/branch projection ----------------------
-    def test_panel_shows_compact_path_and_branch(self):
-        for eid in ("E1", "E2"):
-            self.put("evidence", self.evidence(eid))
-        self.put("hypothesis", self.confirmed("H1", "E1"))
-        self.put("hypothesis", self.hypothesis("H2", investigates="H1", investigation_question="来源？"))
-        self.put("hypothesis", self.hypothesis("H3", investigates="H1", investigation_question="来源？"))
-        self.exclude("H2", "E2")
-        output = render(self.show(), "status")
-        self.assertIn("当前定位路径", output)
-        self.assertIn("H1", output)
-        self.assertIn("来源候选", output)
-        self.assertIn("已排除", output)
-
-    def test_done_view_names_root_hypothesis_node(self):
-        self.put("evidence", self.evidence("E1"))
-        self.put("hypothesis", self.confirmed("H1", "E1"))
-        data = self.show()
-        data["status"] = "closed"
-        data["closure"] = {"outcome": "root_cause", "route": "evidence_chain", "hypotheses": ["H1"],
-                           "conclusion": "原因 A", "scope": "局部", "limitations": "未验证", "evidence": ["E1"]}
-        output = render(data, "done")
-        self.assertIn("根因节点：H1", output)
-        data["closure"].pop("hypotheses")
-        self.assertNotIn("根因节点", render(data, "done"))
 
 
 if __name__ == "__main__":

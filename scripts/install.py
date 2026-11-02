@@ -11,6 +11,23 @@ import tempfile
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+# Exact paths shipped by older releases. Never glob-delete users' extra files.
+RETIRED_FILES = {Path("scripts/panel.py"), Path("references/display.md"), Path("references/evaluation.md")}
+LEGACY_TEST_FILES = {Path("scripts") / f"test_{name}.py"
+                     for name in ("case", "diagnosis", "evidence", "investigation", "mechanisms", "msprobe")}
+
+
+def obsolete_files(target, destination):
+    if target == "claude-alias":
+        return []
+    result = []
+    for relative in sorted(RETIRED_FILES | LEGACY_TEST_FILES):
+        path = destination / relative
+        if path.exists() or path.is_symlink():
+            if not path.resolve().is_relative_to(destination.resolve()) or path.is_symlink() or not path.is_file():
+                raise ValueError(f"obsolete managed path is not a regular file inside the destination: {relative}")
+            result.append(relative)
+    return result
 
 
 def replace_file(path, value):
@@ -59,7 +76,7 @@ def installation_files(target, home=None):
         if broken:
             raise ValueError(f"broken Skill references: {broken}")
         files = {path.relative_to(source): path.read_bytes() for path in source.rglob("*")
-                 if path.is_file() and "__pycache__" not in path.parts}
+                 if path.is_file() and "__pycache__" not in path.parts and not path.name.startswith("test_")}
     else:
         destination = home / ".claude" / "commands"
         skill = (ROOT / "skills" / "debug-agent" / "SKILL.md").as_posix()
@@ -84,18 +101,22 @@ def check_installation(target, home=None):
             missing.append(name)
         elif installed.read_bytes() != value:
             changed.append(name)
+    obsolete = [p.as_posix() for p in obsolete_files(target, destination)]
     return {"target": target, "destination": str(destination), "managed_files": len(files),
             "source_sha256": digest.hexdigest(), "missing": missing, "changed": changed,
-            "matches": not missing and not changed,
-            "scope": "Managed source files only; unrelated installed files are not removed or compared."}
+            "obsolete": obsolete,
+            "matches": not missing and not changed and not obsolete,
+            "scope": "Runtime files and known retired paths only; repository tests and unrelated user files are excluded."}
 
 
 def install(target, home=None, update=False):
     home, destination, files = installation_files(target, home)
-    previous = {p: (destination / p).read_bytes() if (destination / p).exists() else None for p in files}
+    obsolete = obsolete_files(target, destination)
+    previous = {p: (destination / p).read_bytes() if (destination / p).exists() else None for p in [*files, *obsolete]}
     changed = [p for p, value in files.items() if previous[p] is not None and previous[p] != value]
+    changed.extend(obsolete)
     if changed and not update:
-        raise ValueError("existing files differ; use --update to back up and replace managed files")
+        raise ValueError("existing files differ or are retired; use --update to back up and replace/remove managed files")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     backup = home / ".debug-agent" / "install-backups" / stamp / target
     for relative in changed:
@@ -110,6 +131,9 @@ def install(target, home=None, update=False):
             path = destination / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             replace_file(path, value)
+            written.append(relative)
+        for relative in obsolete:
+            (destination / relative).unlink()
             written.append(relative)
     except OSError as exc:
         failures = []

@@ -1,8 +1,8 @@
 # Debug Agent
 
-帮助模型以可复核证据定位 AI 训练与推理正确性问题：NaN/Inf、跨设备差异、梯度异常、状态相关错误和偶现复读。
+帮助用户以可复核证据找出 AI 训练与推理的报错、挂死及数值/状态异常根因，包括 loss 上扬、NaN/Inf、grad norm 爆炸、spike、跨设备差异和偶现复读。
 
-产品核心是**数据与代码联合分析、有效取证和准确收敛**。模型决定具体分析、工具和实验；Skill 提供必要的数据契约与判断边界，不要求先建任务树、先缩减实验或完成固定检查表。
+以代码和运行证据联合分析，按需组合异常判定、依赖偏序、保真细化、去噪和实验停止判定。模型围绕关键未知选择动作，证据充分即交付，不要求先建任务树。[诊断结构](docs/diagnostic-architecture.md)说明这些操作的关系。
 
 ## 日常使用
 
@@ -14,25 +14,27 @@
 | Pi | `/skill:debug-agent <问题描述>` |
 | Claude Code | `/debug-agent:debug <问题描述>` |
 
-例如：`$debug-agent 分析两端 dump 的 grad norm 差异，只使用已有材料，不运行训练。`
+例如：`$debug-agent 训练在 step 1200 挂死，分析已有各 rank 日志和线程栈，不重启作业。`
 
-隐式调用由宿主选择；需要确认加载时使用显式入口。通常直接汇报判断与证据，结果区分根因确认、针对性修复验证、范围已缩小和受阻待续。
+也可以只分析已有材料，不运行训练。隐式调用由宿主选择，需要确认加载时使用显式入口。交付区分根因确认、针对性修复验证、范围缩小和受阻待续。
 
-## 能力边界
+## 按需能力与边界
 
-| 能力 | 实际作用 |
+[核心入口](skills/debug-agent/SKILL.md)路由到相关参考与工具：
+
+| 能力 | 用途 |
 |---|---|
-| [诊断决策](skills/debug-agent/SKILL.md) | 分析后判断证据充分性，按缺口选择观察/对照/缩减；检查步骤是否改变关键判断，允许纠错回溯 |
-| [msprobe 工具](skills/debug-agent/references/msprobe.md) | 按执行序、显式栈与 shape 对应读取所有提供卡，保留未匹配与采集边界，复用 scan/query |
-| [运行时取证](skills/debug-agent/references/runtime.md) | 核对加载身份、对象生命周期、异步完成和插桩扰动 |
-| [产物快照](skills/debug-agent/references/evidence.md) | 保存指定日志/配置/补丁的原始字节与 SHA256，校验后输出精确摘录；不证明因果解释 |
-| [按需接续](skills/debug-agent/references/commands.md) | 恢复已有证据和作业记录；多节点交接才启用账本协议，兼容旧案例 |
+| [msprobe](skills/debug-agent/references/msprobe.md) | dump 对齐、比较、缓存查询及可逆差异聚焦 |
+| [诊断操作](skills/debug-agent/references/diagnosis.md) | 显式样本判据、依赖 DAG 首异常候选与未知边界 |
+| [实验判定](skills/debug-agent/references/experiments.md) | 检查前提、回答/反证、冲突与停止条件 |
+| [证据快照](skills/debug-agent/references/evidence.md) | 保存原始字节、校验与精确摘录 |
+| [恢复](skills/debug-agent/references/commands.md) | 按需接续已有案例，保留更正与失效前提 |
 
-没有独立模型服务、远程执行器或后台调度器。运行工具与权限来自宿主，用户约束优先。原场景能直接取证时无需另构造实验；代码和证据已经充分时直接交付。
+工具不认证根因，也不直接终止进程；运行权限、执行和真实停止由宿主承接。本项目没有独立模型服务或后台调度器。
 
 ## 安装与更新
 
-需要 Python 3.10+，脚本仅依赖标准库。在宿主实际运行的 Windows/Linux/WSL 环境安装。
+需要 Python 3.10+，脚本仅依赖标准库。在宿主实际运行的 Windows/Linux/WSL 环境安装；Linux/WSL 若没有 `python`，使用 `python3` 执行下面的命令。
 
 ```sh
 git clone https://github.com/tjh-ukn/debug-agent.git
@@ -42,7 +44,7 @@ python scripts/install.py codex --update # 备份差异文件后更新
 python scripts/install.py codex --check  # 只读检查内容与路由是否一致
 ```
 
-Codex 安装到 `$CODEX_HOME/skills/debug-agent`（缺省 `~/.codex/skills/debug-agent`）；Pi 安装到 `~/.pi/agent/skills/debug-agent`。安装器不修改模型配置，失败尝试回滚。宿主未刷新技能时重新启动后检查。
+Codex 安装到 `$CODEX_HOME/skills/debug-agent`（缺省 `~/.codex/skills/debug-agent`）；Pi 安装到 `~/.pi/agent/skills/debug-agent`。仅分发运行文件；`--update` 备份替换和退役文件，失败尝试回滚，不修改模型配置。宿主未刷新技能时重新启动后检查。
 
 Claude Code：
 
@@ -56,10 +58,9 @@ claude plugin install debug-agent@debug-agent-marketplace
 ## 验证与维护
 
 ```sh
-python -m unittest discover -s skills/debug-agent/scripts -p 'test_*.py'
-python -m unittest discover -s scripts -p 'test_*.py'
+python -m unittest discover -s tests -t .
 ```
 
-[产品目标与评估计划](docs/diagnostic-effectiveness.md)说明保留和裁剪能力的标准；[验证记录](docs/validation.md)区分工具测试、接入检查和诊断行为实验。当前没有完成真实案例的同条件对照，不能宣称已证明定位更快、更准。
+测试集中在 `tests/`，不随 Skill 分发。[评估计划](docs/diagnostic-effectiveness.md)、[验证记录](docs/validation.md)与[合成案例](evals/README.md)分别覆盖工具、诊断行为和实际成本；脚本通过不证明真实定位提速。
 
-私有案例、凭据和本机产物不入库。旧版 panel/trace/control 接口保留兼容，卡片展示与调查树不属于默认诊断路径。
+旧 panel 卡片接口已退役，原始状态用 `case.py --case <dir> show` 查看；已有 case/schema、恢复、更正传播及 trace 查询保留。私有案例、凭据和本机产物不入库。

@@ -13,7 +13,7 @@ def context_for(payload, config_path=None):
     if not read_config(config_path).get("always_on", False):
         return None
     skill = ROOT / "skills" / "debug-agent" / "SKILL.md"
-    context = (f"[Debug Agent ON] 精度诊断会话提醒已开启。处理精度定位或恢复已有诊断时，"
+    context = (f"[Debug Agent ON] AI 根因诊断会话提醒已开启。处理训练/推理的报错、挂死、数值或状态异常，或恢复已有诊断时，"
                f"读取 {skill}，默认直接诊断，按需使用取证与恢复工具。与诊断无关的请求正常处理。"
                "保存的任务仅为恢复线索；先核实运行作业与代码环境，不自动重跑实验。")
     cwd = payload.get("cwd") if isinstance(payload, dict) else None

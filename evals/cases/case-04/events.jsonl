@@ -1,0 +1,5 @@
+{"context":{"run_id":"old-replay","window_id":"step8/rank0"},"fact":"same_input","value":true,"validity":"valid","source":"old-input-check:1"}
+{"context":{"run_id":"replay-42","window_id":"step8/rank0"},"fact":"same_input","value":false,"validity":"valid","source":"runner.log:1"}
+{"context":{"run_id":"replay-42","window_id":"step8/rank0"},"fact":"same_state","value":true,"validity":"valid","source":"runner.log:2"}
+{"context":{"run_id":"replay-42","window_id":"step8/rank0"},"fact":"output_nonfinite","value":true,"validity":"valid","source":"runner.log:3"}
+{"context":{"run_id":"replay-42","window_id":"step8/rank0"},"fact":"boundary_complete","value":true,"validity":"valid","source":"runner.log:4"}

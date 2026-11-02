@@ -1,5 +1,122 @@
 # 机制、接入与长任务恢复验证
 
+## 0.9.1 结构与分发瘦身（2026-10-22，本地升级，未发布）
+
+删除 panel.py 卡片渲染器及 display/evaluation 两份无调用的兼容占位参考；状态查询复用 case show/recovery resume。调查来源、前提依赖、证据更正和已有 case/schema 仍有恢复用途，保留其实现与回归。S/D、判定/偏序/保真细化、去噪及实验判定的详细参考和工具保留。
+
+七个测试模块集中到仓库 tests/，不再随任何宿主的 Skill 源目录分发；移除八项纯卡片展示检查，机制检查保留，新增五项分发/迁移检查。安装器只识别明确列出的九个历史受管理路径，更新前备份、清理失败回滚；不按通配符删除用户自建文件，不修改案例数据或模型配置。旧 panel 接口退役，使用 `case.py --case <dir> show` 查看原始状态。
+
+| 度量 | 瘦身前 | 瘦身后 | 变化 |
+|---|---:|---:|---:|
+| 安装受管理文件 | 31 | 22 | 减少 9 个 |
+| 分发内容原始字节数 | 284,716 | 162,683 | 减少 42.9% |
+| SKILL.md Unicode 字符数 | 1,716 | 1,245 | 减少 27.4% |
+
+字节数按受管理源文件原始字节相加，不含 pycache、备份或用户额外文件；字符数包括 frontmatter，不是 token、定位速度或质量测量。瘦身前快照和逐文件清单保存在本机任务产物中。
+
+```sh
+python -B -X utf8 -m unittest discover -s tests -t .
+# 147 passed；统一测试入口
+python -B -X utf8 <skill-creator>/scripts/quick_validate.py skills/debug-agent
+# Skill is valid!
+git diff --check
+# passed；保留已有 CRLF 规范化提示
+```
+
+迁移回归实际覆盖：安装包不含测试与退役模块；旧残留的只读检查；更新前备份九个历史文件；用户自建 test_custom.py 和已有案例保留；删除中途失败后还原先前删除与修改；Claude 别名不清理相邻目录；异常同名目录不被当文件删除。没有重复运行模型行为对照或设备作业，不能从瘦身比例推断诊断提速。
+
+本机 Codex 已通过 `scripts/install.py codex --update` 同步，随后 `--check` 返回 managed_files=22、missing/changed/obsolete 均为空、matches=true。从安装目录实际导入九个运行模块，并调用 frontier 保留两个异常候选；九个退役文件在安装中均已移除，备份字节与瘦身前快照一致。实际路径与输出保存在本机任务产物中，未发布远程版本。
+
+## 0.9.0 诊断结构与局部确定性操作（2026-10-22，本地升级，未发布）
+
+进化分析与组件关系见 [diagnostic-architecture.md](diagnostic-architecture.md)。本轮将 S/D 信息与关联、三值判定、异常偏序、保真细化、去噪、主动诊断和序贯停止组织到短入口及两份按需参考，保留用户选择路径与证据充分即交付的约定。hypothesis 不是调查起点的必填条件；原有账本/schema、恢复与默认查询保留。
+
+新增 `diagnosis.py`：judge 对显式样本和容差执行 finite/close/range，缺条件保持 unknown；frontier 计算有来源的依赖 DAG 的极小已观测异常，保留未知祖先和未决边；evaluate 在对应执行窗口内区分回答、反证、无效、未决与预算，只给继续/停止建议。有效前提优先于预期现象，同事实冲突不取最后值。没有进程控制或根因认证副作用。
+
+msprobe query 增加 `--focus differences`：仅折叠无变化且无缺失/警告的已比较摘要，保留有限小差异、元数据、双方异常、旧缓存未知与未匹配，按聚焦后结果分页，所有卡和折叠计数仍返回，原始 alignment 可回查。没有新增后台服务或远程执行器。
+
+### 确定性检查
+
+Windows，Python 3.13.3：
+
+```sh
+python -B -X utf8 -m unittest discover -s skills/debug-agent/scripts -p 'test_*.py'
+# 最终 126 passed：本轮起点 97 + 26 项 diagnosis + 3 项差异聚焦回归
+python -B -X utf8 -m unittest discover -s scripts -p 'test_*.py'
+# 24 passed：隔离安装、更新、回滚、路由与旧接口
+python -B -X utf8 <skill-creator>/scripts/quick_validate.py skills/debug-agent
+# Skill is valid!
+git diff --check
+# passed；已有 precision.md 出现 CRLF 将被规范为 LF 的提示，无空白错误
+```
+
+累计 150 项不同脚本检查通过。judge 覆盖部分样本的有效违规、缺失/错误参考、上下文未验证、禁止默认容差、大整数及浮点溢出边界；frontier 覆盖并发来源、跨正常节点的未知祖先、推测边不剪枝、循环拒绝及来源保留；实验检查覆盖跨运行混入、前提否定/未知、冲突、预算、明确范围的反证、只读 CLI 和受控合成采集循环早停。循环在第四个必要事件后结束，没有继续处理后续无关事件；这是合作式接线检查，不是 GPU/NPU 作业停止或节省时间的实测。
+
+另核对 Skill 路由、README/架构/评估文档链接和两个插件 JSON 版本，均可解析。未重跑真实训练、远程复现、通信任务或性能基准。
+
+### 隔离前向使用检查
+
+新增公开合成 case-03/04，答案仅在 evals/expected.md，不进入 Skill 路由和安装范围。一个未继承本轮讨论的独立执行者只取得对应请求、原始材料、更新后的 Skill 及相关工具；明确禁止读取维护文档、答案、历史结果和工作快照。它按两个请求分别处理，实际读取 diagnosis/experiments 参考并调用 frontier/evaluate；两次 CLI 均退出 0，无工具错误，无文件修改或真实作业动作。
+
+- case-03：返回 branch_a/branch_b 两个极小异常候选，保留 upstream_state、partial 覆盖及未决控制边，未用时间戳排序或正常摘要排除上游；没有宣称全局唯一首错或根因。
+- case-04：以本次输入字节不匹配判重放 invalid，忽略旧运行的相反记录；即使已有 NaN 仍未确认或排除 kernel 对原训练的因果责任。区分停止额外采集建议与真实进程控制，保留 process_stopped=false，未将历史 running 当作现场事实。
+
+这是一个上下文中的两个开发回归，没有同条件 A/B 对照、重复样本、精确用量和可比耗时，不能据此宣称诊断准确率或速度提升。
+
+### 本机安装与实际入口
+
+通过原安装器将当前工作区 Skill 同步到本机 Codex；安装器先备份已有差异文件，没有修改模型配置或其他宿主。
+
+```sh
+python -B -X utf8 scripts/install.py codex --update
+# Installed；旧受管理文件已备份
+python -B -X utf8 scripts/install.py codex --check
+# managed_files=31，missing=[]，changed=[]，matches=true
+```
+
+实际以安装目录的 diagnosis.py 执行三个入口：judge 返回 normal/unknown/abnormal；frontier 返回两个分支并保留未知祖先；evaluate 返回 invalid，忽略 1 条外来窗口记录，process_stopped=false。命令、解析输出和实际脚本路径保存在本机任务产物中，不进入 Skill 安装。内容一致与脚本调用不证明宿主在新会话中的隐式选择率，也未发布到远程市场。
+
+## 生命周期调整、协议修复与公开回归（2026-10-13，未发布）
+
+基于源码基线 `60f5e73` 修改工作区，保持插件版本 0.8.0，本轮未提交、发布或同步用户已安装副本。
+
+入口改为 AI 训练/推理的报错、挂死、数值与状态异常诊断。SKILL.md 保留目标、证据边界、完成契约及短路由；移除通用诊断决策教程，不增加固定实验或账本前置要求。训练参考提供度量语义和局部取证边界；报错/挂死参考解释异常链、线程栈、collective 与等待关系，附可适配的 faulthandler 示例。维护侧按 A→B 的工具收益、B→C 的指导收益分别验收，并说明模型/框架升级后的更新与退役条件。
+
+确定性修复：
+
+- msprobe 保留 nan_check 的顶层 is_nan、任务/采集级别与每侧首次已报告异常；标志不同、双方异常、缺失和非法值分别表达，不从缺少统计推断正常。新旧 scan/query 缓存均可读取。
+- 支持 L0/mix 模块 forward.N/backward.N、parameters 与 parameters_grad.N；参数梯度计数按 grad_fn 触发次数解释，不借同号 forward 建立虚假对应。缺独立栈时保持未匹配，但 inspect 仍保留梯度统计。
+- 必要前提的主张、关系或状态变化沿 parents 撤回依赖判断；恢复能识别失效前提，成功结案拒绝不可用必要前提。investigates 保持独立，旧原始证据、结果、运行标识和 schema 保留。
+
+实际检查（Windows，Python 3.13.3）：
+
+```sh
+python -B -X utf8 -m unittest discover -s skills/debug-agent/scripts -p 'test_*.py'
+# 97 passed；原 78 + 12 项 msprobe + 7 项前提传播回归
+python -B -m unittest discover -s scripts -p 'test_*.py'
+# 24 passed；临时目录内安装、更新、回滚与路由检查
+python -X utf8 <skill-creator>/scripts/quick_validate.py skills/debug-agent
+# Skill is valid!
+git diff --check
+# passed
+```
+
+另核对仓库本地 Markdown 路由、插件 JSON 和 UI metadata；两个公开案例的脚本输出与固定 records.jsonl 逐字节一致。faulthandler 示例在临时目录、短超时下实际输出等待线程栈，随后取消定时器，进程正常退出；没有设备作业或外部写入。
+
+### 独立上下文的合成行为对照
+
+公开材料在 [evals](../evals/README.md)。三个新的执行者均未继承本次修改与审核历史，只取得同样的两份 request、对应源码和完整相关记录；禁止读取评估答案及维护文档。A 没有插件资源，B 可选工具及协议说明，C 可用当前 Skill 和按需参考。每组在一个上下文中依次处理两例，共六份诊断；不是每例多次重复的统计试验。未设置模型覆盖，实际模型 ID、采样参数、精确用量与可比耗时未获取，不能将缺失成本填为 0。
+
+| 组别 | case-01：停顿 | case-02：loss 上涨 | 实际读取与动作 |
+|---|---|---|---|
+| A：直接诊断 | 正确关联 rank1 NaN 分支、缺席 dp seq=1 和 rank0 等待；保留 NaN 来源未决 | 正确指出分子未 mask、分母只计有效 token；不推断梯度/参数机制 | 六份原始文件，只读 |
+| B：工具与协议可选 | 同样正确解释模拟中的参与缺失，不归因于真实网络 | 同样正确解释 8/4→8/1，并保留零有效 token 的额外契约问题 | 六份原始文件；未调用或读取可选工具，因为静态材料足够 |
+| C：当前 Skill | 正确解释具体分支和对应记录，限定合成范围 | 正确解释指标计算错误，未宣称修复已验证 | 六份原始文件，另读 SKILL.md、failures.md、training.md；只读 |
+
+三组都没有修改案例、运行训练/通信、访问外部环境或宣称真实修复完成。逐例判断引用源码/记录及具体机制，不以答案关键词或步骤数量评分。
+
+这个结果支持：新版入口和按需参考在这两个静态小案例上没有观察到诊断退化。A 已能正确完成，B 的工具没有被需要，C 增加了三份阅读，故本轮**没有证明工具或指导提升定位质量/速度**，也不足以判定资料应全部退役。后续需要真实取证缺口、正常行为反例和未参与设计的案例，按消融结果裁剪；不把本轮六份诊断当作真实设备验收或总体成功率。
+
 ## 0.8.0 默认直接诊断与产物校验（2026-09-29）
 
 同日产品整理：把诊断决策集中到 SKILL.md；runtime.md 只保留运行身份、对象复用、异步依赖和插桩的特殊边界。删除卡片教程与重复诊断示例，display/evaluation 旧路径只留简短兼容说明；评估设计统一放在仓库 docs 中。commands 与 tasks 压缩为按需接口说明，旧脚本、schema 和用户数据不删除。msprobe 明确已有 scan 可直接 query，局部查询无需强制全卡重扫，局部结论不外推。

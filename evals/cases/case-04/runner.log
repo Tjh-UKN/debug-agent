@@ -1,0 +1,5 @@
+replay-42 input bytes do not match the saved original input; both shapes match.
+replay-42 weights and declared checkpoint state match.
+replay-42 module output contains NaN.
+replay-42 observed module boundary completed.
+recorded runner status: running; this is a saved label, not a live process check.

@@ -1,7 +1,7 @@
 {
   "name": "debug-agent-marketplace",
   "metadata": {
-    "description": "Root-cause diagnosis for AI correctness issues."
+    "description": "Root-cause diagnosis for AI training and inference errors, hangs, and numerical or state anomalies."
   },
   "owner": {
     "name": "Tjh-UKN"
@@ -10,7 +10,7 @@
     {
       "name": "debug-agent",
       "source": "./",
-      "description": "Code and data diagnosis with evidence tools and optional recovery"
+      "description": "Diagnose AI errors, hangs, and numerical or state anomalies with evidence tools and optional recovery."
     }
   ]
 }

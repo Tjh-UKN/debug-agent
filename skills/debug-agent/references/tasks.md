@@ -36,7 +36,7 @@ show/handoff 只读。写入在本地磁盘使用 OS 锁与原子替换；case b
 
 supported/ruled_out/confirmed 和 retained 场景必须引用当前有效证据。ruled_out/confirmed 还需要 decision_review（见下文）。baseline 只能引用 original/retained 场景。所有依赖关系禁止自指和环。
 
-- parents 是结论成立的必要前提，多项按 AND 解释。
+- parents 是结论成立的必要前提，多项按 AND 解释。前提的主张、必要前提关系或状态降级/转向改变时，显式依赖判断撤回为 unresolved，相关任务和 checkpoint 标为待重审；open → supported → confirmed 的正常升级不撤回。调查来源关系不参与该传播。
 - investigates 是调查来源，非空时必须附 investigation_question。调查子树剪枝不自动撤回父/兄弟判断；不从此关系推导 parents。旧案例缺少调查关系时不从自然语言猜补。
 - materials 仅用于定位用户提供的原始材料；可用 materials.py 枚举指定目录或压缩包，不代表文件已检查。inspected 是 agent 自报访问记录，实际范围仍看 scope。
 
@@ -58,6 +58,8 @@ task 状态约束：pending → running/blocked/cancelled；running → blocked/
 
 run 保存命令、cwd、host、job_id/PID 和产物路径；昂贵作业启动前留计划，启动后补实际标识。取消账本任务不会取消真实进程，须核实停止或交接。执行者只更新分配的 task、追加证据并 submit，主 agent 管理整体结论。
 
+task 可只围绕缺失条件提问，hypotheses 允许为空。需要运行中判定时，将[实验计划](experiments.md)与结果路径保存在已有 action/acceptance/run 或证据引用中，无需新增账本。answered/refuted/invalid 等是动作判定原因，映射到既有 observation/contradicts/invalid/inconclusive 时保留具体范围；answered 不自动写 confirmed。运行依赖 DAG 与本协议的调查来源/结论前提分开。
+
 ```json
 {"task_id":"T1","rev":2,"new_evidence":[],"result":{"outcome":"observation","summary":"观察及其对待核查问题的影响","evidence":["E1"],"limitations":"已检查范围以外未验证"}}
 ```
@@ -72,7 +74,7 @@ result.outcome 为 supports/contradicts/inconclusive/invalid/observation；前�
 {"rev":12,"outcome":"root_cause","route":"evidence_chain","conclusion":"具体原因","scope":"实测覆盖范围","limitations":"仅外推边界","hypotheses":["H_ROOT"],"evidence":["E1"],"acceptance_check":"与原目标的对应","decision_review":{"scope_check":"范围依据","causal_link":"具体机制及必要前提","countercheck":"关键替代解释的核查依据","evidence":["E1"],"open_issues":[]}}
 ```
 
-- outcome: root_cause/fix_verified/narrowed/blocked。成功 route: evidence_chain/targeted_fix，需有效证据、acceptance_check 和 decision_review；root_cause + evidence_chain 另需至少一个 confirmed 根因假设。confirmed/ruled_out 假设也用同结构 decision_review。
+- outcome: root_cause/fix_verified/narrowed/blocked。成功 route: evidence_chain/targeted_fix，需有效证据、acceptance_check 和 decision_review；root_cause + evidence_chain 另需至少一个 confirmed 根因假设。成功结案所引用假设的所有必要前提须为 supported/confirmed 且当前有效、无需重审；open 允许登记和调查，但不足以支持成功闭环。confirmed/ruled_out 假设也用同结构 decision_review。
 - decision_review 的 scope_check/causal_link/countercheck 必须非空、evidence 有效、open_issues 为空。应先解决当前判断的关键缺口，不能为了通过校验把它清空或藏入 limitations。
 - close 时不能有 running/submitted 任务，成功时所有 task 须 done/cancelled；取消不必要的剩余工作要有理由，不能伪造完成。reopen 使用案例 rev 与 reason，历史结论保留。
 

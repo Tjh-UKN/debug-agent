@@ -74,10 +74,36 @@ def record_evidence(item):
     return set(item.get("evidence", [])) | set(review.get("evidence", []) if isinstance(review, dict) else [])
 
 
-def reconcile_correction(state, correction, newly_inactive):
+def logical_blocker(state, hid, require_supported=False):
+    """Find a missing or unusable necessary premise along parents only."""
+    hypotheses = state.get("hypothesis", {})
+    pending = list(hypotheses.get(hid, {}).get("parents", []))
+    seen = set()
+    inactive = inactive_evidence(state)
+    while pending:
+        parent = pending.pop()
+        if parent in seen:
+            continue
+        seen.add(parent)
+        item = hypotheses.get(parent)
+        if item is None:
+            return {"state": "unknown", "blocked_by": parent}
+        if item.get("needs_review") or item["status"] in {"unresolved", "ruled_out"}:
+            return {"state": "stale", "blocked_by": parent}
+        if require_supported and item["status"] not in {"supported", "confirmed"}:
+            return {"state": "stale", "blocked_by": parent}
+        cited = record_evidence(item)
+        if (item["status"] in {"supported", "confirmed"} and not item.get("evidence")
+                or cited & inactive or not cited <= state.get("evidence", {}).keys()):
+            return {"state": "stale", "blocked_by": parent}
+        pending.extend(item.get("parents", []))
+    return None
+
+
+def reconcile_dependencies(state, reason, inactive=(), changed_hypothesis=None):
     """Withdraw dependent decisions, not historical work or the raw observations."""
-    inactive = newly_inactive
-    affected = set()
+    inactive = set(inactive)
+    affected = {changed_hypothesis} if changed_hypothesis else set()
     while True:
         more = {hid for hid, item in state["hypothesis"].items()
                 if record_evidence(item) & inactive or set(item.get("parents", [])) & affected}
@@ -98,14 +124,16 @@ def reconcile_correction(state, correction, newly_inactive):
         if more <= affected_tasks:
             break
         affected_tasks.update(more)
-    reason = "Evidence correction " + correction + "; reassess dependent conclusions"
     for kind in ("hypothesis", "task", "scenario", "checkpoint"):
         for item_id, item in state[kind].items():
+            if kind == "hypothesis" and item_id == changed_hypothesis:
+                continue  # Preserve the updated premise; withdraw its dependents.
             refs_used = record_evidence(item) | set(item.get("result", {}).get("evidence", []))
             hit = refs_used & inactive or (kind == "hypothesis" and item_id in affected)
             hit = hit or (kind == "task" and item_id in affected_tasks)
             hit = hit or (kind == "scenario" and item_id in affected_scenarios)
             hit = hit or (kind == "checkpoint" and item.get("baseline") in affected_scenarios)
+            hit = hit or (kind == "checkpoint" and set(item.get("focus_hypotheses", [])) & affected)
             if not hit:
                 continue
             item.update(needs_review=reason, rev=item["rev"] + 1, updated_at=now())
@@ -120,6 +148,11 @@ def reconcile_correction(state, correction, newly_inactive):
         # The old closure remains in history. A correction is a reason to review,
         # not proof that the opposite conclusion is true.
         state.update(status="active", closure=None)
+
+
+def reconcile_correction(state, correction, newly_inactive):
+    reconcile_dependencies(state, "Evidence correction " + correction + "; reassess dependent conclusions",
+                           inactive=newly_inactive)
 
 
 def handoff(state, task_id):
@@ -258,6 +291,16 @@ def put(state, kind, data):
     state[kind][data["id"]] = item
     if kind == "evidence" and data.get("supersedes"):
         reconcile_correction(state, data["id"], inactive_evidence(state) - before)
+    elif kind == "hypothesis" and old:
+        strength = {"open": 0, "supported": 1, "confirmed": 2}
+        old_status, new_status = old["status"], item["status"]
+        strengthened = (old_status in strength and new_status in strength
+                        and strength[new_status] > strength[old_status])
+        if (old["claim"] != item["claim"]
+                or set(old.get("parents", [])) != set(item.get("parents", []))
+                or (old_status != new_status and not strengthened)):
+            reconcile_dependencies(state, "Hypothesis changed " + data["id"] + "; reassess necessary premises",
+                                   changed_hypothesis=data["id"])
     return item
 
 
@@ -316,6 +359,12 @@ def change(state, command, data, kind=None):
             require(root_ids, "confirmed root hypothesis required for evidence_chain closure")
             require(all(state["hypothesis"][hid]["status"] == "confirmed" for hid in root_ids),
                     "closure hypotheses must be confirmed")
+        if data["outcome"] in {"root_cause", "fix_verified"}:
+            for hid in root_ids:
+                blocker = logical_blocker(state, hid, require_supported=True)
+                require(blocker is None,
+                        f"closure hypothesis {hid} has an unusable necessary premise: "
+                        + (blocker["blocked_by"] if blocker else ""))
         state.update(status="closed", closure=copy.deepcopy(data))
         result = state["closure"]
     elif command == "reopen":

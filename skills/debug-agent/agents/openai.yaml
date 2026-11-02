@@ -1,6 +1,6 @@
 interface:
-  display_name: "精度诊断 Agent"
-  short_description: "直接推进精度诊断，按需读取 msprobe、核实原始证据和恢复已有案例"
-  default_prompt: "使用 $debug-agent 分析当前精度问题，根据证据选择下一步并推进到定位闭环。"
+  display_name: "AI 根因诊断 Agent"
+  short_description: "定位 AI 训练与推理的报错、挂死及数值/状态异常，按需取证和恢复诊断"
+  default_prompt: "使用 $debug-agent 定位当前 AI 训练或推理问题的根因，根据已有材料选择必要取证。"
 policy:
   allow_implicit_invocation: true

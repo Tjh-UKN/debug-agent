@@ -22,10 +22,11 @@ python <skill-dir>/scripts/msprobe.py scan --left <npu-data> --right <gpu-data> 
 ```
 
 - `summary.json`：每个 step/rank 的原始文件与 SHA256、记录数、匹配/未匹配数、按执行序的首批差异、各卡较大的 Norm 差异、缺卡/读取错误。所有卡都会扫描，top 列表仅是导航，不是覆盖范围。
+- 原始文件的 `task`、`level`、`framework` 随来源保留。`nan_check` 的顶层 `is_nan` 单独保存：`0/1` 为已记录的 API 溢出状态，缺失或非法值标为不可用，不能用缺少统计推断没有 NaN。每侧概览保留异常计数与按执行序的首个 `is_nan=1`，即使没有栈、shape 或对端卡也保留该信号。
 - `alignment.jsonl`：完整对应表及未对齐项（含单边缺卡时已有端的全部记录），带两端 API 名、各自执行序位置、方向/重计算标记和源文件路径。表以左端次序为主、追加右端未匹配项，不是联合执行轨迹；原始位置始终以各自 `position` 为准。summary 的 `alignment_line` 是该文件的一基行号。
 - `coverage_complete` 只表示已提供并可识别的 step/rank 对齐覆盖、且已观测 DTensor mesh 没有缺卡，不等于所有 API 已匹配，也不证明输入包之外没有其他运行材料。必须同时阅读 errors、missing_rank_pairs、missing_mesh_ranks、unscoped_sources 及每卡的未匹配数。
 - 不把小差异自动归为噪声；默认不丢弃任何有限数值差异。记录顺序上的首个差异不是已经证明的因果起点。
-- 新扫描的 matched 行带 `boundary_evidence`：分开统计 input/output 记录中的相等、不同、缺失、非有限字段，保留各组绝对/相对 Norm 差异较大项和元数据变化。这是摘要导航，不给算子判定正常/异常；输入槽也可能是权重或执行前目的缓冲。
+- 新扫描的 matched 行带 `boundary_evidence`：分开统计 input/output/parameters/parameters_grad 记录中的相等、不同、缺失、非有限字段，保留各组绝对/相对 Norm 差异较大项和元数据变化。这是摘要导航，不给算子判定正常/异常；输入槽也可能是权重或执行前目的缓冲。`nan_check` 比较独立于这些统计，`1/0` 标为不同、`1/1` 保留双方异常、`0/0` 仅表示两端已记录的标志相同；标志缺失或非法时不判相同。
 - Norm 差异分别按前向、反向和重计算标记展示绝对/相对较大项，避免前向量级掩盖反向异常。`comparison` 同时列出实际比较统计数、缺失统计数与需要核查端口的记录数；只匹配到 shape 但无统计，不算完成精度比较。大包可使用已有解包目录减少压缩包随机读取开销。
 
 对选定卡与调用深入比较（`--api` 使用左端 API 名，右端由对应表规则解析）：
@@ -39,7 +40,9 @@ python <skill-dir>/scripts/msprobe.py inspect --data <one-side-data> --rank <ran
 
 调用栈匹配只归一化 Python 安装前缀与行号偏移，保留模块路径、函数和源代码行文本；原始栈始终保留。项目 checkout 根路径不同时，显式传 `--left-code-root`、`--right-code-root`，不靠丢掉文件路径来勉强匹配。实质分支/代码不同导致不匹配时，inspect 原始栈并核查代码关系。
 
-backward 没有独立栈时，工具使用本端同名 forward（仅替换末尾方向）的显式栈作为调用点，并在 `stack_api` 标出来源；跨端仍按栈、forward shape、backward 首个梯度输入槽 shape、方向及执行序匹配，不按两端编号直接配对。端口布局不同时 `role_check_required=true`；共有字段的统计可以查看，但在核实端口语义前不能把输出槽命名为 dQ/dK/dW 来作因果推断。
+backward 没有独立栈时，工具按 API/模块命名协议定位本端对应 forward，使用其显式栈作为调用点，并在 `stack_api` 标出来源；跨端仍按栈、forward shape、backward 首个梯度输入槽 shape、方向及执行序匹配，不按两端编号直接配对。端口布局不同时 `role_check_required=true`；共有字段的统计可以查看，但在核实端口语义前不能把输出槽命名为 dQ/dK/dW 来作因果推断。
+
+L0/mix 的模块名支持 `Module.<模块路径>.<类名>.forward.N`、`backward.N`，模块参数保留 `/parameters/<参数名>` 路径；模块反向可使用本端对应 `forward.N` 的栈。`Module.<模块路径>.<类名>.parameters_grad.N` 直接记录参数梯度，字段路径如 `/weight/0/Norm`，阶段为 `parameters_grad`。这里的 N 是参数 `grad_fn` 触发次数，不是模块调用次数；工具不借用同数字的 forward 栈或重计算标记。参数梯度仅凭自己的显式栈、参数 shape、方向及执行出现次序跨端对应；缺栈或重复次数不等时保留未匹配，inspect 仍保留参数梯度统计。协议依据：[msProbe 官方 PyTorch 采集说明](https://github.com/Ascend/msprobe/blob/master/docs/zh/user_guide/dump/pytorch_data_dump_instruct.md#dumpjson文件说明)。
 
 dtype、mask 类型/值、scale 等配置差异是诊断线索，不作为相同 shape 调用的剔除条件。DTensor 的记录 shape/统计是本地视图，工具保留 mesh/placement，不擅自乘卡数、乘 √卡数或自动推算“全局参数”。不兼容的分片/视图不直接比较数值。工具比较统计摘要，不加载原始张量；摘要相等不证明逐元素相等，非有限值与缺失统计单独标记。
 
@@ -51,10 +54,13 @@ dtype、mask 类型/值、scale 等配置差异是诊断线索，不作为相同
 python <skill-dir>/scripts/msprobe.py query --scan <scan-dir> --api '*linear*' --phase backward --limit 3
 ```
 
-- `--phase forward/backward/recompute` 区分普通前向、反向和前向重计算；省略表示全部阶段。可用 `--step`、`--rank` 缩小范围，默认保留所有卡，包括符合条件记录为零的卡。
+材料过多时可加 `--focus differences`。仅在完整缓存字段明确表示已比较、无变化、无缺失、无角色/顺序警告时折叠对应摘要；异常、有限小差异、元数据变化、未匹配、缺失统计和旧缓存未知项均保留。每卡返回 matches_before_focus、folded_equal_summaries 与视图内 match_count，分页在聚焦后执行，原始 alignment 不变。用默认 `--focus all` 或指定 API 可回查；摘要被折叠不证明逐元素相等或节点正常。
+
+- `--phase forward/backward/recompute/parameters_grad` 区分普通前向、反向、前向重计算和模块参数梯度；省略表示全部阶段。可用 `--step`、`--rank` 缩小范围，默认保留所有卡，包括符合条件记录为零的卡。
 - `--limit` 与 `--offset` **按每张卡的每个 step 分页**，结果保留总命中数、各对应状态计数与 `next_offset`。不会因 rank0 占满页面就漏掉后续卡；没有命中不等于该卡没有执行。
 - 每行带 `alignment_line`、两端原始位置/来源、对齐依据与 `role_check_required`；缺卡、未匹配和旧扫描缺少输入输出证据的情况保留。元数据变化最多展示 8 条，并给出总数及截断标志；完整字段用 compare/inspect。
 - query 只读 summary/alignment 文件，不重开原包，不检查原包是否已更新。结果引用扫描时的 source hashes；它是存档证据，不是当前文件的实时状态。旧扫描仍可查位置，但 `matched_rows_without_boundary_evidence` 非零时不能把缺少证据当成没有差异，针对需要的调用用 compare/inspect 即可。
+- 新扫描的来源和对应行保留采集任务、模块计数含义及 `nan_check` 状态。旧缓存缺少这些字段时继续可查，不补写 `is_nan=0`；需要判断 NaN 时用原始记录核查。
 
 ## 端口与问题范围
 
