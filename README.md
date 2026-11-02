@@ -56,8 +56,8 @@ $debug-agent NPU grad norm 比 GPU 大很多。两端 dump 在 ./npu 和 ./gpu�
 
 | 关联证据 | 缩小范围 | 交付判断 |
 |---|---|---|
-| 把代码、调用栈和运行记录对应起来。 | 按判据和可信依赖寻找异常，保留未知边界。 | 给出结论、原始依据、适用范围和关键缺口。 |
-| 比较 msprobe dump 时，保留跨卡范围、缺失和未匹配项。 | 按需细化、回查或设计实验，复用已有扫描。 | 区分根因确认、修复验证、范围缩小与受阻待续。 |
+| 把代码、调用栈和运行记录对应起来。 | 按判据和可信依赖寻找异常，保留未知边界。 | 结论附原始依据，写明适用范围和关键缺口。 |
+| 比较 msprobe dump 时，保留跨卡范围、缺失和未匹配项。 | 按需细化、回查或设计实验，复用已有扫描。 | 说明是确认了根因、验证了修复，还是缩小了范围或受阻待续。 |
 
 普通问题直接推进，长任务按需保存证据和恢复进度。工具负责读取、比较与显式判据检查，根因判断由宿主模型完成；取证、实验和真实停止遵守用户授权。
 
@@ -106,7 +106,7 @@ claude plugin install debug-agent@debug-agent-marketplace
 | 阅读 | 内容 |
 |---|---|
 | [Skill 入口](skills/debug-agent/SKILL.md) | 宿主实际加载的诊断指导 |
-| [诊断结构](docs/diagnostic-architecture.md) | S/D 证据、关联、判据、异常偏序与细化 |
+| [诊断结构](docs/diagnostic-architecture.md) | S/D 证据与关联、判据，以及异常偏序与细化 |
 | [验证记录](docs/validation.md) | 已做的检查、案例结果与未决问题 |
 | [评估方法](docs/diagnostic-effectiveness.md) · [公开案例](evals/README.md) | 如何检验诊断行为与结论边界 |
 
