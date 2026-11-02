@@ -1,5 +1,40 @@
 # 机制、接入与长任务恢复验证
 
+## Pi 单案例接入与行为检查（2026-11-02）
+
+被测代码为提交 `f05e234`（0.9.1）。先在 Windows 运行统一脚本检查，147 项通过，再将当前 Skill 用原安装器更新到 WSL Ubuntu 的 Pi 环境；`python3 scripts/install.py pi --check` 返回 managed_files=22、missing/changed/obsolete 为空、matches=true。模型配置保持不变。
+
+实际运行：Pi 0.84.1，Node v22.23.1，默认 provider `volcengine-ark`、model `volcengine/deepseek-v4.1-flash`、thinking=high；最终模型消息中的 provider/model 与默认配置一致。Pi 入口是 `/home/tjh/.nvm/versions/node/v22.23.1/bin/pi`，实际读取 Skill 为 `/home/tjh/.pi/agent/skills/debug-agent/SKILL.md`。默认非交互 PATH 中没有 pi，因此仅在本次子进程的 PATH 加入已有 Node bin，没有修改 shell、模型或凭据配置。
+
+将 case-04 的 request、plan、events 和 runner.log 复制到新的 `/tmp/debug-agent-pi-case04-*` 目录。只提供案例请求与已安装 Skill，禁止读取评估答案、维护文档、历史会话和其他个人文件；本次明确要求调用实验判定器，因此属于工具接入与行为冒烟，不是自由选择工具的效率对照。
+
+```text
+pi --offline --no-session --no-extensions --no-skills \
+  --skill /home/tjh/.pi/agent/skills/debug-agent \
+  --no-prompt-templates --no-context-files --no-themes --no-approve \
+  --tools read,bash,grep,find,ls --mode json --print <case-request>
+```
+
+`--no-skills` 关闭自动发现，显式 `--skill` 仍加载指定资源，按本机 Pi resource-loader 实现核实。`--offline` 仅关闭启动时网络操作，正常模型请求仍使用用户当前配置。允许 bash 以运行只读判定器；读取范围和禁止修改由请求约束，未声称有额外文件系统沙箱。
+
+决定性实际调用：
+
+```sh
+python3 /home/tjh/.pi/agent/skills/debug-agent/scripts/diagnosis.py \
+  evaluate --plan plan.json --events events.jsonl
+# decision=stop, reason=invalid, invalid_preconditions=[same_input]
+# matching_rules=[bad_output], selected_events=4, ignored_events=1
+# process_stopped=false
+```
+
+Pi 正确解释：当前输入字节不匹配使重放失效，已有 NaN 不能确认或排除 kernel 对原训练的因果责任；旧运行的 same_input=true 不可借用；停止建议针对额外采集，历史 running 不是实时状态。实际退出码 0、无工具错误；案例、安装 Skill、settings.json/models.json 在运行前后内容一致，没有训练或真实进程停止动作。
+
+本次墙钟 35.941 秒，10 次 assistant 消息结束事件、15 次工具调用（read=9、ls=3、bash=3）。模型报告累计 input=10,463、output=3,419、cacheRead=39,936、totalTokens=53,818；这是多轮请求的累计用量，含重复缓存读取，不是单次上下文长度，也不是独立核对的账单。
+
+核心案例判定通过，但有可见瑕疵：已获得 invalid 后又用 `--finished` 重复判定，读取了额外参考；从“字节不同”进一步断言数值不同，并提及未提供的“原始账本”，表达超出给定证据。故不记为所有诊断表述均准确，也不据此给整个产品成功率或提速结论。单个已知开发案例无 A/B 对照，没有重跑或据一次输出增加通用规则。
+
+命令、脱敏事件、原始回答和逐项判定保存在本机 `.work/pi-case04-20261102/`，不提交运行日志或凭据；测试结果只记录于本文。源代码提交与本次验证记录分开保留。
+
 ## 0.9.1 结构与分发瘦身（2026-10-22，本地升级，未发布）
 
 删除 panel.py 卡片渲染器及 display/evaluation 两份无调用的兼容占位参考；状态查询复用 case show/recovery resume。调查来源、前提依赖、证据更正和已有 case/schema 仍有恢复用途，保留其实现与回归。S/D、判定/偏序/保真细化、去噪及实验判定的详细参考和工具保留。
