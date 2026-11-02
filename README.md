@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/readme/hero.png" alt="Debug Agent — Follow the evidence. 调试侦探沿着计算图寻找异常。" width="100%">
+  <img src="assets/readme/hero.png" alt="Debug Agent 封面：通过计算图检查异常节点。" width="100%">
 </p>
 
-<h1 align="center">沿着证据，追到原因。</h1>
+<h1 align="center">Debug Agent</h1>
 
 <p align="center">
-  <b>AI 训练与推理的诊断 Skill</b><br>
-  报错 · 挂死 · NaN / Inf · 梯度异常 · 跨设备差异 · 偶现复读
+  <b>AI 训练与推理故障诊断 Skill</b><br>
+  运行报错 · 运行挂起 · NaN / Inf · 梯度异常 · 跨设备差异 · 偶发重复输出
 </p>
 
 <p align="center">
@@ -19,7 +19,7 @@
 <p align="center">
   <a href="#快速开始">快速开始</a> &nbsp;·&nbsp;
   <a href="#使用案例">使用案例</a> &nbsp;·&nbsp;
-  <a href="#安装">安装</a> &nbsp;·&nbsp;
+  <a href="#安装说明">安装说明</a> &nbsp;·&nbsp;
   <a href="docs/diagnostic-architecture.md">诊断结构</a> &nbsp;·&nbsp;
   <a href="docs/validation.md">验证记录</a>
 </p>
@@ -28,7 +28,7 @@
 
 ## 快速开始
 
-把问题、材料路径和限制告诉它。
+调用时提供问题描述、材料路径和运行限制。
 
 ```text
 $debug-agent NPU grad norm 比 GPU 大很多。两端 dump 在 ./npu 和 ./gpu，定位原因，只分析已有数据，不重跑训练。
@@ -38,32 +38,32 @@ $debug-agent NPU grad norm 比 GPU 大很多。两端 dump 在 ./npu 和 ./gpu�
 |---|---|---|
 | `$debug-agent <问题>` | `/skill:debug-agent <问题>` | `/debug-agent:debug <问题>` |
 
-已有数据足够就直接分析；有缺口时，再选能改变判断的取证动作。安装后可显式调用，自动选择由宿主决定。
+现有材料充分时直接分析；材料不足时，选择能补足关键证据的取证方式。安装后可通过上述命令显式调用，自动选择行为由宿主决定。
 
 ## 使用案例
 
-**Loss 从 2 涨到 8，原因可能藏在指标的分子里。**
+**合成案例：Loss 统计中分子与分母的范围不一致**
 
 <p align="center">
   <img src="assets/readme/case-02.svg" alt="合成案例：token loss 总和保持 8，有效 token 从 4 减到 1。分子没有应用 mask，reported loss 因而从 2 变成 8。" width="100%">
 </p>
 
-上图根据仓库的[公开合成案例](evals/cases/case-02/request.md)绘制：代码对全部 token 求和，却只按有效 token 计数。分子也应用 mask 后，两步平均值都为 2。材料足以解释指标变化，不能据此确认梯度或参数异常。
+该图基于仓库中的[公开合成案例](evals/cases/case-02/request.md)绘制。分子累加全部 token 的 Loss，分母仅统计有效 token 数量。对分子应用相同 mask 后，两步的平均 Loss 均为 2。现有材料可解释指标变化，尚不足以确认梯度或参数异常。
 
-这是案例机制展示。模型实际诊断的结果与限制见[验证记录](docs/validation.md)。
+该图用于说明案例中的故障机制。模型诊断结果及其限制见[验证记录](docs/validation.md)。
 
-## 它怎么追查
+## 诊断机制
 
-| 关联证据 | 缩小范围 | 交付判断 |
+| 证据关联 | 异常定位 | 诊断结论 |
 |---|---|---|
-| 把代码、调用栈和运行记录对应起来。 | 按判据和可信依赖寻找异常，保留未知边界。 | 结论附原始依据，写明适用范围和关键缺口。 |
-| 比较 msprobe dump 时，保留跨卡范围、缺失和未匹配项。 | 按需细化、回查或设计实验，复用已有扫描。 | 说明是确认了根因、验证了修复，还是缩小了范围或受阻待续。 |
+| 关联代码、调用栈与运行记录。 | 依据判据与可信依赖定位异常，保留未知边界。 | 诊断结论包含原始依据，并说明适用范围及关键缺口。 |
+| 比较 msprobe dump 时，保留跨卡范围、缺失记录和未匹配项。 | 按需细化分析、回查证据或设计实验，复用已有扫描结果。 | 明确结论属于根因确认、修复验证、范围缩小或受阻待续。 |
 
-普通问题直接推进，长任务按需保存证据和恢复进度。工具负责读取、比较与显式判据检查，根因判断由宿主模型完成；取证、实验和真实停止遵守用户授权。
+诊断任务可直接执行，长任务按需保存证据与恢复进度。工具负责读取、比较与显式判据检查，根因判断由宿主模型完成；取证、实验与进程终止均遵守用户授权。
 
-## 安装
+## 安装说明
 
-需要 **Python 3.10+**，运行脚本仅依赖标准库。在 Agent 实际运行的环境安装；Pi 在 WSL，就在 WSL 安装。
+环境要求为 **Python 3.10+**，运行脚本仅依赖标准库。安装须在 Agent 的实际运行环境中执行；若 Pi 运行于 WSL，应在对应的 WSL 环境中安装。
 
 <details open>
 <summary><b>Codex / Pi</b></summary>
@@ -78,7 +78,7 @@ cd debug-agent
 | Codex | `python scripts/install.py codex` |
 | Pi | `python3 scripts/install.py pi` |
 
-Linux/WSL 若没有 `python`，使用 `python3`。宿主未刷新技能时，重启后再调用。
+若 Linux/WSL 环境未提供 `python` 命令，可使用 `python3`。若宿主尚未识别新安装的 Skill，重启宿主后再调用。
 
 </details>
 
@@ -95,29 +95,29 @@ claude plugin install debug-agent@debug-agent-marketplace
 <details>
 <summary><b>更新、检查与安装位置</b></summary>
 
-更新仓库后，在安装命令后加 `--update`；加 `--check` 可只读核对安装内容。更新先备份差异文件，不修改模型配置。
+更新仓库后，为安装命令添加 `--update`；使用 `--check` 可只读核对安装内容。更新时先备份差异文件，不修改模型配置。
 
-安装位置、更新边界与可选别名见[宿主接入](skills/debug-agent/references/integration.md)。
+安装路径、更新范围与可选命令别名见[宿主接入](skills/debug-agent/references/integration.md)。
 
 </details>
 
-## 继续深入
+## 参考文档
 
-| 阅读 | 内容 |
+| 文档 | 内容 |
 |---|---|
 | [Skill 入口](skills/debug-agent/SKILL.md) | 宿主实际加载的诊断指导 |
 | [诊断结构](docs/diagnostic-architecture.md) | S/D 证据与关联、判据，以及异常偏序与细化 |
-| [验证记录](docs/validation.md) | 已做的检查、案例结果与未决问题 |
-| [评估方法](docs/diagnostic-effectiveness.md) · [公开案例](evals/README.md) | 如何检验诊断行为与结论边界 |
+| [验证记录](docs/validation.md) | 已完成的检查、案例结果与未决问题 |
+| [评估方法](docs/diagnostic-effectiveness.md) · [公开案例](evals/README.md) | 诊断行为与结论边界的评估方式 |
 
 <details>
-<summary><b>开发检查</b></summary>
+<summary><b>开发与测试</b></summary>
 
 ```sh
 python -m unittest discover -s tests -t .
 ```
 
-测试与公开案例留在仓库，不随 Skill 分发。脚本检查通过不代表每次都能正确定位。
+测试与公开案例保留在源码仓库，不随 Skill 分发。脚本检查通过不保证实际场景中的诊断结果正确。
 
 </details>
 
